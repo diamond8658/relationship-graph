@@ -102,3 +102,50 @@ class PersonOut(PersonBase):
 
 class LayoutUpdate(BaseModel):
     positions: Dict[str, Dict[str, float]]
+
+# ── Export ────────────────────────────────────────────────────────────────────
+
+class ExportRelationship(BaseModel):
+    id: str
+    to_id: str
+    label: str
+    sentiment: str
+
+class ExportInterest(BaseModel):
+    id: str
+    type: str
+    label: str
+    confirmed: bool
+
+class ExportTimelineEntry(BaseModel):
+    id: str
+    date: str
+    note: str
+
+class ExportTag(BaseModel):
+    id: str
+    label: str
+
+class ExportPerson(BaseModel):
+    id: str
+    name: str
+    primary_tag: str
+    occupation: str
+    company: str
+    location: str
+    phone: str
+    email: str
+    linkedin: str
+    description: str
+    photo: str
+    x: float
+    y: float
+    tags: List[ExportTag]
+    timeline: List[ExportTimelineEntry]
+    interests: List[ExportInterest]
+    relationships: List[ExportRelationship]
+
+class ExportData(BaseModel):
+    version: int
+    exported_at: str
+    people: List[ExportPerson]

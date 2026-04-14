@@ -1,3 +1,10 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# main.py — FastAPI application with all REST endpoints.
+# Sections: People, Tags, Timeline, AI Interest Extraction, Interests,
+#           Relationships, Layout, Export.
+# All routes use SQLAlchemy sessions via the get_db() dependency.
+# ─────────────────────────────────────────────────────────────────────────────
+
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -279,38 +286,39 @@ def delete_relationship(rel_id: str, db: Session = Depends(get_db)):
 
 # ── Export ───────────────────────────────────────────────────────────────────
 
-@app.get("/export")
+@app.get("/export", response_model=schemas.ExportData)
 def export_data(db: Session = Depends(get_db)):
+    from datetime import datetime
     people = db.query(models.Person).all()
-    return {
-        "version": 1,
-        "exported_at": __import__("datetime").datetime.utcnow().isoformat(),
-        "people": [
-            {
-                "id": p.id,
-                "name": p.name,
-                "primary_tag": p.primary_tag,
-                "occupation": p.occupation,
-                "company": p.company,
-                "location": p.location,
-                "phone": p.phone,
-                "email": p.email,
-                "linkedin": p.linkedin,
-                "description": p.description,
-                "photo": p.photo,
-                "x": p.x,
-                "y": p.y,
-                "tags": [{"id": t.id, "label": t.label} for t in p.tags],
-                "timeline": [{"id": e.id, "date": e.date, "note": e.note} for e in p.timeline],
-                "interests": [{"id": i.id, "type": i.type, "label": i.label, "confirmed": i.confirmed} for i in p.interests],
-                "relationships": [
-                    {"id": r.id, "to_id": r.to_id, "label": r.label, "sentiment": r.sentiment}
+    return schemas.ExportData(
+        version=1,
+        exported_at=datetime.utcnow().isoformat(),
+        people=[
+            schemas.ExportPerson(
+                id=p.id,
+                name=p.name,
+                primary_tag=p.primary_tag or "",
+                occupation=p.occupation or "",
+                company=p.company or "",
+                location=p.location or "",
+                phone=p.phone or "",
+                email=p.email or "",
+                linkedin=p.linkedin or "",
+                description=p.description or "",
+                photo=p.photo or "",
+                x=p.x,
+                y=p.y,
+                tags=[schemas.ExportTag(id=t.id, label=t.label) for t in p.tags],
+                timeline=[schemas.ExportTimelineEntry(id=e.id, date=e.date, note=e.note) for e in p.timeline],
+                interests=[schemas.ExportInterest(id=i.id, type=i.type, label=i.label, confirmed=i.confirmed) for i in p.interests],
+                relationships=[
+                    schemas.ExportRelationship(id=r.id, to_id=r.to_id, label=r.label, sentiment=r.sentiment)
                     for r in p.outgoing
                 ],
-            }
+            )
             for p in people
         ],
-    }
+    )
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 

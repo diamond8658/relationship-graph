@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useCallback } from "react";
 import { Person } from "../types";
+import { api } from "../api";
 
 const PALETTE = ["#378ADD","#1D9E75","#D85A30","#7F77DD","#BA7517","#D4537E","#639922","#E24B4A"];
 const PALETTE_LIGHT = ["#E6F1FB","#E1F5EE","#FAECE7","#EEEDFE","#FAEEDA","#FBEAF0","#EAF3DE","#FCEBEB"];
@@ -30,6 +31,7 @@ interface GraphProps {
   onDragEnd: (id: string, x: number, y: number) => void;
   onUntangleRef?: React.MutableRefObject<(() => void) | null>;
   onLayoutSaved?: (positions: Record<string, { x: number; y: number }>) => void;
+  onUpdated?: () => void;
 }
 
 const SENTIMENT_COLORS_MODAL: Record<string, string> = {
@@ -74,7 +76,7 @@ const ModalRelationships: React.FC<{ modal: any; people: any[] }> = ({ modal, pe
 };
 
 export const Graph: React.FC<GraphProps> = ({
-  people, selectedId, filterText, onSelectPerson, onDragEnd, onUntangleRef, onLayoutSaved,
+  people, selectedId, filterText, onSelectPerson, onDragEnd, onUntangleRef, onLayoutSaved, onUpdated,
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const draggingRef = useRef<{ id: string; offX: number; offY: number } | null>(null);
@@ -84,6 +86,11 @@ export const Graph: React.FC<GraphProps> = ({
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const renderRef = useRef<(() => void) | null>(null);
+  const dragConnectRef = useRef<{ fromId: string; x: number; y: number } | null>(null);
+  const [connectModal, setConnectModal] = React.useState<{ fromId: string; toId: string } | null>(null);
+  const [connectLabel, setConnectLabel] = React.useState("");
+  const [connectSentiment, setConnectSentiment] = React.useState<string>("neutral");
+  const [dropTargetId, setDropTargetId] = React.useState<string | null>(null);
   const transformRef = useRef({ scale: 1, x: 0, y: 0 });
   const [transformState, setTransformState] = React.useState({ scale: 1, x: 0, y: 0 });
   const isPanningRef = useRef(false);
@@ -365,55 +372,139 @@ export const Graph: React.FC<GraphProps> = ({
     ids.forEach(id => { degree[id] = 0; });
     edges.forEach(([a, b]) => { degree[a]++; degree[b]++; });
 
-    // Sort non-me nodes by degree descending
-    const sorted = [...nonMeIds].sort((a, b) => (degree[b] || 0) - (degree[a] || 0));
+    // Build adjacency map
+    const neighbors: Record<string, Set<string>> = {};
+    ids.forEach(id => { neighbors[id] = new Set(); });
+    edges.forEach(([a, b]) => { neighbors[a].add(b); neighbors[b].add(a); });
 
-    // Place in concentric rings based on connection to Me
-    const directlyConnected = new Set<string>();
-    if (meId) {
-      edges.forEach(([a, b]) => {
-        if (a === meId) directlyConnected.add(b);
-        if (b === meId) directlyConnected.add(a);
+    // ── Classify nodes ────────────────────────────────────────────────────────
+    const leafNodes: { id: string; parentId: string }[] = [];
+    const nonLeafIds: string[] = [];
+    nonMeIds.forEach(id => {
+      if (neighbors[id].size === 1) {
+        leafNodes.push({ id, parentId: Array.from(neighbors[id])[0] });
+      } else {
+        nonLeafIds.push(id);
+      }
+    });
+
+    // ── Group non-leaf nodes by primary_tag ───────────────────────────────────
+    const clusterMap: Record<string, string[]> = {};
+    nonLeafIds.forEach(id => {
+      const p = people.find(p2 => p2.id === id);
+      const tag = p?.primary_tag?.toLowerCase().trim() || "__ungrouped__";
+      if (!clusterMap[tag]) clusterMap[tag] = [];
+      clusterMap[tag].push(id);
+    });
+    const clusterKeys = Object.keys(clusterMap).sort((a, b) =>
+      clusterMap[b].length - clusterMap[a].length
+    );
+    const numClusters = clusterKeys.length;
+
+    // ── Hub-and-spoke: Me in center, clusters arranged radially ──────────────
+    // Me always goes at canvas center
+    if (meId) positionsRef.current[meId] = { x: cx, y: cy };
+
+    // Cluster centers arranged evenly around Me
+    // Spoke radius scales with cluster count and canvas size
+    const spokeR = Math.min(W, H) * (numClusters <= 2 ? 0.38 : 0.34);
+    const clusterCenters: Record<string, { x: number; y: number }> = {};
+    // Sort clusters: named groups first (alphabetically), ungrouped last
+    const sortedClusterKeys = [...clusterKeys].sort((a, b) => {
+      if (a === "__ungrouped__") return 1;
+      if (b === "__ungrouped__") return -1;
+      return a.localeCompare(b);
+    });
+
+    // Distribute clusters evenly across full 360°, starting at top (-π/2)
+    sortedClusterKeys.forEach((tag, ci) => {
+      const angle = (2 * Math.PI * ci / Math.max(numClusters, 1)) - Math.PI / 2;
+      clusterCenters[tag] = {
+        x: cx + spokeR * Math.cos(angle),
+        y: cy + spokeR * Math.sin(angle),
+      };
+    });
+
+    // Place nodes within each cluster in an arc facing away from center
+    clusterKeys.forEach(tag => {
+      const members = clusterMap[tag];
+      const center = clusterCenters[tag];
+      const facingAngle = Math.atan2(center.y - cy, center.x - cx);
+      if (members.length === 1) {
+        positionsRef.current[members[0]] = { x: center.x, y: center.y };
+      } else {
+        // Spread members in an arc facing AWAY from canvas center
+        // Use 180° arc max so nodes don't spill toward other clusters
+        const facingAngle = Math.atan2(center.y - cy, center.x - cx);
+        const arcSpan = Math.min(Math.PI, Math.PI * 0.35 * members.length);
+        const innerR = Math.max(90, 60 * members.length / (2 * Math.PI) * 2.5);
+        members.forEach((id, i) => {
+          const angle = facingAngle - arcSpan / 2 + arcSpan * (members.length === 1 ? 0.5 : i / (members.length - 1));
+          positionsRef.current[id] = {
+            x: center.x + innerR * Math.cos(angle),
+            y: center.y + innerR * Math.sin(angle),
+          };
+        });
+      }
+    });
+
+    // Fallback: no clusters — spread on circle
+    if (numClusters === 0) {
+      nonLeafIds.forEach((id, i) => {
+        const angle = (2 * Math.PI * i / Math.max(nonLeafIds.length, 1)) - Math.PI / 2;
+        positionsRef.current[id] = {
+          x: cx + spokeR * Math.cos(angle),
+          y: cy + spokeR * Math.sin(angle),
+        };
       });
     }
 
-    const ring1 = sorted.filter(id => directlyConnected.has(id));
-    const ring2 = sorted.filter(id => !directlyConnected.has(id));
-
-    // Use more of the canvas — 35% and 46% of the smaller dimension
-    const r1 = Math.min(W, H) * 0.35;
-    const r2 = Math.min(W, H) * 0.46;
-
-    // Place ring 1 evenly
-    ring1.forEach((id, i) => {
-      const angle = (2 * Math.PI * i / Math.max(ring1.length, 1)) - Math.PI / 2;
-      positionsRef.current[id] = { x: cx + r1 * Math.cos(angle), y: cy + r1 * Math.sin(angle) };
+    // ── Place leaf nodes outside their parent, pointing away from center ──────
+    const leavesPerParent: Record<string, string[]> = {};
+    leafNodes.forEach(({ id, parentId }) => {
+      if (!leavesPerParent[parentId]) leavesPerParent[parentId] = [];
+      leavesPerParent[parentId].push(id);
     });
 
-    // Place ring 2 evenly, offset by half a slot to interleave with ring 1
-    ring2.forEach((id, i) => {
-      const offset = ring1.length > 0 ? Math.PI / ring1.length : 0;
-      const angle = (2 * Math.PI * i / Math.max(ring2.length, 1)) - Math.PI / 2 + offset;
-      positionsRef.current[id] = { x: cx + r2 * Math.cos(angle), y: cy + r2 * Math.sin(angle) };
+    leafNodes.forEach(({ id, parentId }) => {
+      const parentPos = positionsRef.current[parentId] || { x: cx, y: cy };
+      const siblings = leavesPerParent[parentId];
+      const leafIdx = siblings.indexOf(id);
+      const total = siblings.length;
+      const baseAngle = Math.atan2(parentPos.y - cy, parentPos.x - cx);
+      const leafAngle = baseAngle + (leafIdx - (total - 1) / 2) * 0.6;
+      const leafDist = 160;
+      let lx = parentPos.x + Math.cos(leafAngle) * leafDist;
+      let ly = parentPos.y + Math.sin(leafAngle) * leafDist;
+
+      // Nudge away from other nodes
+      let currentAngle = leafAngle;
+      for (let nudge = 0; nudge < 12; nudge++) {
+        let tooClose = false;
+        for (const otherId of [...nonLeafIds, ...(meId ? [meId] : [])]) {
+          const oPos = positionsRef.current[otherId];
+          if (!oPos) continue;
+          const minDist = otherId === parentId ? 140 : 100;
+          const dx = lx - oPos.x, dy = ly - oPos.y;
+          if (Math.sqrt(dx * dx + dy * dy) < minDist) { tooClose = true; break; }
+        }
+        if (!tooClose) break;
+        currentAngle += 0.3;
+        lx = parentPos.x + Math.cos(currentAngle) * leafDist;
+        ly = parentPos.y + Math.sin(currentAngle) * leafDist;
+      }
+      positionsRef.current[id] = { x: lx, y: ly };
     });
 
-    // If no Me node, just spread everyone on one circle
-    if (!meId) {
-      sorted.forEach((id, i) => {
-        const angle = (2 * Math.PI * i / Math.max(sorted.length, 1)) - Math.PI / 2;
-        positionsRef.current[id] = { x: cx + r1 * Math.cos(angle), y: cy + r1 * Math.sin(angle) };
-      });
-    } else {
-      positionsRef.current[meId] = { x: cx, y: cy };
-    }
-
-    // Animate the transition with a quick force settle (fewer iterations, just to avoid overlap)
+        // ── Repulsion-only settle to resolve overlaps ────────────────────────────
     const REPULSION = 15000;
     const DAMPING = 0.7;
     const ITERATIONS = 80;
     const STEPS_PER_FRAME = 8;
     const vel: Record<string, { x: number; y: number }> = {};
     ids.forEach(id => { vel[id] = { x: 0, y: 0 }; });
+    // Pin leaf nodes during settle; Me stays centered due to balanced repulsion
+    const pinnedIds = new Set<string>(leafNodes.map(l => l.id));
 
     let iter = 0;
     let rafId: number;
@@ -438,9 +529,9 @@ export const Graph: React.FC<GraphProps> = ({
           }
         }
 
-        // Keep Me pinned
+        // Keep Me and leaf nodes pinned during settle
         ids.forEach(id => {
-          if (id === meId) { positionsRef.current[id] = { x: cx, y: cy }; vel[id] = { x: 0, y: 0 }; return; }
+          if (pinnedIds.has(id)) { vel[id] = { x: 0, y: 0 }; return; } // pinned nodes don't move
           vel[id].x = (vel[id].x + force[id].x) * DAMPING;
           vel[id].y = (vel[id].y + force[id].y) * DAMPING;
           const pos = positionsRef.current[id];
@@ -469,76 +560,10 @@ export const Graph: React.FC<GraphProps> = ({
     return () => cancelAnimationFrame(rafId);
   }, [people, onLayoutSaved]);
 
-  // Auto-retry wrapper: runs layout up to MAX_ATTEMPTS times until crossings are acceptable
-  const runWithRetry = useCallback(() => {
-    const MAX_ATTEMPTS = 4;
-    let attempt = 0;
-    let cancel: (() => void) | undefined;
-
-    function countCrossings(): number {
-      const edgeSet = new Set<string>();
-      const edges: [string, string][] = [];
-      people.forEach(p => {
-        p.outgoing.forEach((r: any) => {
-          const key = [p.id, r.to_id].sort().join("||");
-          if (!edgeSet.has(key)) { edgeSet.add(key); edges.push([p.id, r.to_id]); }
-        });
-      });
-      let crossings = 0;
-      for (let i = 0; i < edges.length; i++) {
-        for (let j = i + 1; j < edges.length; j++) {
-          const [a1, a2] = edges[i], [b1, b2] = edges[j];
-          if (a1 === b1 || a1 === b2 || a2 === b1 || a2 === b2) continue;
-          const pa1 = positionsRef.current[a1], pa2 = positionsRef.current[a2];
-          const pb1 = positionsRef.current[b1], pb2 = positionsRef.current[b2];
-          if (!pa1 || !pa2 || !pb1 || !pb2) continue;
-          const d1x = pa2.x-pa1.x, d1y = pa2.y-pa1.y;
-          const d2x = pb2.x-pb1.x, d2y = pb2.y-pb1.y;
-          const cross = d1x*d2y - d1y*d2x;
-          if (Math.abs(cross) < 1e-10) continue;
-          const t = ((pb1.x-pa1.x)*d2y - (pb1.y-pa1.y)*d2x) / cross;
-          const u = ((pb1.x-pa1.x)*d1y - (pb1.y-pa1.y)*d1x) / cross;
-          if (t > 0.05 && t < 0.95 && u > 0.05 && u < 0.95) crossings++;
-        }
-      }
-      return crossings;
-    }
-
-    function tryOnce() {
-      attempt++;
-      const cleanup = runForceLayoutAnimated();
-      cancel = cleanup;
-
-      // Poll until layout finishes, then check crossings
-      const poll = setInterval(() => {
-        // Layout is done when rafId is no longer running — detect via crossing count stability
-        const crossings = countCrossings();
-        const edgeCount = people.reduce((n, p) => n + p.outgoing.length, 0);
-        const maxAcceptable = Math.max(0, Math.floor(edgeCount * 0.25));
-        if (crossings <= maxAcceptable || attempt >= MAX_ATTEMPTS) {
-          clearInterval(poll);
-        }
-      }, 3000); // check 3s after starting (layout takes ~350 frames * 16ms ≈ 2.8s)
-
-      // After layout finishes, check and retry if needed
-      setTimeout(() => {
-        clearInterval(poll);
-        const crossings = countCrossings();
-        const edgeCount = people.reduce((n, p) => n + p.outgoing.length, 0);
-        const maxAcceptable = Math.max(0, Math.floor(edgeCount * 0.25));
-        if (crossings > maxAcceptable && attempt < MAX_ATTEMPTS) {
-          tryOnce();
-        }
-      }, 3200);
-    }
-
-    tryOnce();
-    return () => { if (cancel) cancel(); };
-  }, [people, runForceLayoutAnimated]);
-
+  // Wire the sort button directly to the animated layout — no retry needed since radial is deterministic
   useEffect(() => {
-    if (onUntangleRef) onUntangleRef.current = runWithRetry;
-  }, [onUntangleRef, runWithRetry]);
+    if (onUntangleRef) onUntangleRef.current = runForceLayoutAnimated;
+  }, [onUntangleRef, runForceLayoutAnimated]);
 
 
 
@@ -610,9 +635,10 @@ export const Graph: React.FC<GraphProps> = ({
         g.appendChild(img); g.appendChild(ring);
       } else {
         const circle = document.createElementNS(ns, "circle");
+        const isDropTarget = person.id === dropTargetId;
         circle.setAttribute("r", isMe ? "30" : "26"); circle.setAttribute("fill", c.fill);
-        circle.setAttribute("stroke", person.id === selectedId ? "#2563EB" : isMe ? "#D97706" : "#fff");
-        circle.setAttribute("stroke-width", person.id === selectedId ? "3" : isMe ? "3" : "2");
+        circle.setAttribute("stroke", person.id === selectedId ? "#2563EB" : isDropTarget ? "#378ADD" : isMe ? "#D97706" : "#fff");
+        circle.setAttribute("stroke-width", person.id === selectedId ? "3" : isDropTarget ? "4" : isMe ? "3" : "2");
         g.appendChild(circle);
         const initials = person.name.split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2);
         const t = document.createElementNS(ns, "text");
@@ -633,7 +659,30 @@ export const Graph: React.FC<GraphProps> = ({
       g.addEventListener("mousedown", (e) => {
         e.stopPropagation();
         const pt = svgPt(e);
-        draggingRef.current = { id: person.id, offX: pos.x - pt.x, offY: pos.y - pt.y };
+        if ((e as MouseEvent).shiftKey) {
+          // Shift+drag to create relationship
+          dragConnectRef.current = { fromId: person.id, x: pos.x, y: pos.y };
+        } else {
+          draggingRef.current = { id: person.id, offX: pos.x - pt.x, offY: pos.y - pt.y };
+        }
+      });
+      g.addEventListener("mouseenter", (e2) => {
+        if (dragConnectRef.current && dragConnectRef.current.fromId !== person.id) {
+          setDropTargetId(person.id);
+        }
+      });
+      g.addEventListener("mouseleave", () => {
+        setDropTargetId(null);
+      });
+      g.addEventListener("mouseup", (e2) => {
+        if (dragConnectRef.current && dragConnectRef.current.fromId !== person.id) {
+          const fromId = dragConnectRef.current.fromId;
+          dragConnectRef.current = null;
+          setDropTargetId(null);
+          setConnectLabel("");
+          setConnectSentiment("neutral");
+          setConnectModal({ fromId, toId: person.id });
+        }
       });
       g.addEventListener("mouseenter", (e) => {
         if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
@@ -705,8 +754,10 @@ export const Graph: React.FC<GraphProps> = ({
       const mx = (x1 + x2) / 2;
       const my = (y1 + y2) / 2;
       // Offset label perpendicularly away from center line
-      const labelOffsetX = px * 14 * (side !== 0 ? side : 1);
-      const labelOffsetY = py * 14 * (side !== 0 ? side : 1);
+      // Offset label further from the arrow line so it doesn't cover arrows
+      const labelDist = 18;
+      const labelOffsetX = px * labelDist * (side !== 0 ? side : 1);
+      const labelOffsetY = py * labelDist * (side !== 0 ? side : 1);
       const lx = mx + labelOffsetX;
       const ly = my + labelOffsetY;
       const display = label.length > 18 ? label.slice(0, 16) + "…" : label;
@@ -733,6 +784,29 @@ export const Graph: React.FC<GraphProps> = ({
   useEffect(() => { renderRef.current = render; render(); }, [render]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (dragConnectRef.current) {
+      // Draw a live connecting line while shift-dragging
+      const svg = svgRef.current;
+      if (svg) {
+        let line = svg.querySelector("#drag-connect-line") as SVGLineElement;
+        if (!line) {
+          const ns = "http://www.w3.org/2000/svg";
+          line = document.createElementNS(ns, "line") as SVGLineElement;
+          line.setAttribute("id", "drag-connect-line");
+          line.setAttribute("stroke", "#378ADD");
+          line.setAttribute("stroke-width", "2");
+          line.setAttribute("stroke-dasharray", "6,3");
+          line.setAttribute("pointer-events", "none");
+          svg.querySelector("#transform-root")?.appendChild(line);
+        }
+        const raw = svgPt(e);
+        line.setAttribute("x1", String(dragConnectRef.current.x));
+        line.setAttribute("y1", String(dragConnectRef.current.y));
+        line.setAttribute("x2", String(raw.x));
+        line.setAttribute("y2", String(raw.y));
+      }
+      return;
+    }
     if (isPanningRef.current && !draggingRef.current) {
       const raw = rawPt(e);
       const t = transformRef.current;
@@ -750,8 +824,17 @@ export const Graph: React.FC<GraphProps> = ({
     render();
   }, [render]);
 
+  const cleanupDragConnect = () => {
+    dragConnectRef.current = null;
+    setDropTargetId(null);
+    svgRef.current?.querySelector("#drag-connect-line")?.remove();
+  };
+
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
     isPanningRef.current = false;
+    if (dragConnectRef.current) {
+      cleanupDragConnect();
+    }
     if (!draggingRef.current) return;
     const { id } = draggingRef.current;
     const pos = positionsRef.current[id];
@@ -774,7 +857,7 @@ export const Graph: React.FC<GraphProps> = ({
         style={{ width: "100%", height: "100%", background: "#f8f9fa", cursor: isPanningRef.current ? "grabbing" : "default" }}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={(e) => { handleMouseUp(e); setTooltip(null); if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); isPanningRef.current = false; }}
+        onMouseLeave={(e) => { handleMouseUp(e); setTooltip(null); if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); isPanningRef.current = false; cleanupDragConnect(); }}
         onWheel={handleWheel}
         onMouseDown={handlePanStart}
       >
@@ -795,6 +878,52 @@ export const Graph: React.FC<GraphProps> = ({
         <button onClick={() => adjustZoom(-0.2)} style={zoomBtnStyle}>−</button>
         <button onClick={resetZoom} style={{ ...zoomBtnStyle, fontSize: 9, padding: "4px 6px" }} title="Reset zoom">⊙</button>
       </div>
+
+      {/* Drag-to-connect modal */}
+      {connectModal && (() => {
+        const fromPerson = people.find(p => p.id === connectModal.fromId);
+        const toPerson = people.find(p => p.id === connectModal.toId);
+        const SENTIMENT_COLORS_C: Record<string, string> = { hates: '#7C0A02', dislikes: '#ff6e00', neutral: '#888780', likes: '#03c04a', loves: '#4b0082' };
+        const SENTIMENTS_C = ['hates','dislikes','neutral','likes','loves'];
+        return (
+          <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 40 }}
+            onClick={e => { if (e.target === e.currentTarget) setConnectModal(null); }}>
+            <div style={{ background: "#fff", borderRadius: 10, padding: 20, width: 260, boxShadow: "0 8px 32px rgba(0,0,0,0.18)", display: "flex", flexDirection: "column", gap: 10 }}
+              onClick={e => e.stopPropagation()}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#222" }}>
+                Connect <span style={{ color: "#378ADD" }}>{fromPerson?.name}</span> → <span style={{ color: "#378ADD" }}>{toPerson?.name}</span>
+              </div>
+              <input
+                autoFocus
+                value={connectLabel}
+                onChange={e => setConnectLabel(e.target.value)}
+                placeholder="Label (e.g. Friend, Colleague)"
+                onKeyDown={async e => {
+                  if (e.key === "Enter" && connectLabel.trim()) {
+                    await api.createRelationship({ from_id: connectModal.fromId, to_id: connectModal.toId, label: connectLabel.trim(), sentiment: connectSentiment });
+                    setConnectModal(null); setConnectLabel(""); onUpdated?.();
+                  }
+                  if (e.key === "Escape") setConnectModal(null);
+                }}
+                style={{ fontSize: 13, padding: "6px 10px", border: "1px solid #ccc", borderRadius: 6, outline: "none" }}
+              />
+              <select value={connectSentiment} onChange={e => setConnectSentiment(e.target.value)}
+                style={{ fontSize: 13, padding: "5px 8px", border: `1px solid ${SENTIMENT_COLORS_C[connectSentiment]}`, borderRadius: 6, color: SENTIMENT_COLORS_C[connectSentiment], fontWeight: 600 }}>
+                {SENTIMENTS_C.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
+              </select>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={async () => {
+                  if (!connectLabel.trim()) return;
+                  await api.createRelationship({ from_id: connectModal.fromId, to_id: connectModal.toId, label: connectLabel.trim(), sentiment: connectSentiment });
+                  setConnectModal(null); setConnectLabel(""); onUpdated?.();
+                }} style={{ flex: 2, padding: "6px 0", background: connectLabel.trim() ? "#378ADD" : "#ccc", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Connect</button>
+                <button onClick={() => setConnectModal(null)} style={{ flex: 1, padding: "6px 0", background: "#f0f0f0", color: "#444", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>Cancel</button>
+              </div>
+              <div style={{ fontSize: 10, color: "#aaa", textAlign: "center" }}>Press Enter to connect, Escape to cancel</div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Hover tooltip */}
       {tooltip && !draggingRef.current && (
