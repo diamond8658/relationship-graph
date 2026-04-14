@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.db
+*.sqlite3
+venv/
+.env
+
+# Node
+node_modules/
+build/
+.DS_Store
+
+# CRA
+frontend/build/

@@ -1,0 +1,60 @@
+{
+  "name": "relationship-graph",
+  "version": "1.0.0",
+  "description": "An interactive relationship graph app",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:all": "electron-builder --win --mac"
+  },
+  "build": {
+    "appId": "com.diamond8658.relationship-graph",
+    "productName": "Relationship Graph",
+    "directories": {
+      "output": "../dist"
+    },
+    "files": [
+      "main.js",
+      "frontend/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend/dist/rg-server",
+        "to": "backend/rg-server",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "icons/icon.ico",
+      "extraResources": [
+        {
+          "from": "../backend/dist/rg-server.exe",
+          "to": "backend/rg-server.exe"
+        }
+      ]
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "icons/icon.icns",
+      "extraResources": [
+        {
+          "from": "../backend/dist/rg-server",
+          "to": "backend/rg-server"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.0.0"
+  }
+}

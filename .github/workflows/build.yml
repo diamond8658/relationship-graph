@@ -1,0 +1,106 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Python dependencies
+        working-directory: backend
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Bundle backend (Windows)
+        working-directory: backend
+        run: pyinstaller backend.spec --clean --noconfirm
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm install
+          npm run build
+
+      - name: Copy frontend to electron
+        run: |
+          cp -r frontend/build electron/frontend
+
+      - name: Build Electron app (Windows)
+        working-directory: electron
+        run: |
+          npm install
+          npm run build:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/*.exe
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Python dependencies
+        working-directory: backend
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Bundle backend (Mac)
+        working-directory: backend
+        run: pyinstaller backend.spec --clean --noconfirm
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm install
+          npm run build
+
+      - name: Copy frontend to electron
+        run: |
+          cp -r frontend/build electron/frontend
+
+      - name: Build Electron app (Mac)
+        working-directory: electron
+        run: |
+          npm install
+          npm run build:mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Mac artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-installer
+          path: dist/*.dmg
