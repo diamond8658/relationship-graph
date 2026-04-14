@@ -277,6 +277,41 @@ def delete_relationship(rel_id: str, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+# ── Export ───────────────────────────────────────────────────────────────────
+
+@app.get("/export")
+def export_data(db: Session = Depends(get_db)):
+    people = db.query(models.Person).all()
+    return {
+        "version": 1,
+        "exported_at": __import__("datetime").datetime.utcnow().isoformat(),
+        "people": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "primary_tag": p.primary_tag,
+                "occupation": p.occupation,
+                "company": p.company,
+                "location": p.location,
+                "phone": p.phone,
+                "email": p.email,
+                "linkedin": p.linkedin,
+                "description": p.description,
+                "photo": p.photo,
+                "x": p.x,
+                "y": p.y,
+                "tags": [{"id": t.id, "label": t.label} for t in p.tags],
+                "timeline": [{"id": e.id, "date": e.date, "note": e.note} for e in p.timeline],
+                "interests": [{"id": i.id, "type": i.type, "label": i.label, "confirmed": i.confirmed} for i in p.interests],
+                "relationships": [
+                    {"id": r.id, "to_id": r.to_id, "label": r.label, "sentiment": r.sentiment}
+                    for r in p.outgoing
+                ],
+            }
+            for p in people
+        ],
+    }
+
 # ── Layout ────────────────────────────────────────────────────────────────────
 
 @app.put("/layout")

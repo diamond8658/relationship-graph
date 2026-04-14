@@ -81,6 +81,22 @@ export default function App() {
     } catch {}
   }, []);
 
+  const handleExport = async () => {
+    try {
+      const res = await fetch("http://localhost:8000/export");
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `relationship-graph-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert("Export failed: " + e.message);
+    }
+  };
+
   const handleLayoutSaved = async (positions: Record<string, { x: number; y: number }>) => {
     try {
       await api.saveLayout(positions);
@@ -112,6 +128,7 @@ export default function App() {
         onResetLayout={handleResetLayout}
         onRefresh={loadPeople}
         onUntangle={() => untangleRef.current && untangleRef.current()}
+        onExport={handleExport}
         people={people}
         onSelectPerson={setSelectedId}
       />
