@@ -1,4 +1,4 @@
-name: Build
+name: Build & Release
 
 on:
   push:
@@ -38,9 +38,11 @@ jobs:
           npm install
           npm run build
 
-      - name: Copy frontend to electron
+      - name: Copy frontend to electron (Windows)
+        shell: pwsh
         run: |
-          cp -r frontend/build electron/frontend
+          if (Test-Path electron/frontend) { Remove-Item -Recurse -Force electron/frontend }
+          Copy-Item -Recurse frontend/build electron/frontend
 
       - name: Build Electron app (Windows)
         working-directory: electron
@@ -54,7 +56,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: dist/*.exe
+          path: dist/**/*.exe
 
   build-mac:
     runs-on: macos-latest
@@ -87,8 +89,9 @@ jobs:
           npm install
           npm run build
 
-      - name: Copy frontend to electron
+      - name: Copy frontend to electron (Mac)
         run: |
+          rm -rf electron/frontend
           cp -r frontend/build electron/frontend
 
       - name: Build Electron app (Mac)
@@ -103,4 +106,48 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mac-installer
-          path: dist/*.dmg
+          path: dist/**/*.dmg
+
+  release:
+    needs: [build-windows, build-mac]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: installers/windows
+
+      - name: Download Mac artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-installer
+          path: installers/mac
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Relationship Graph ${{ github.ref_name }}
+          body: |
+            ## Relationship Graph ${{ github.ref_name }}
+
+            ### Downloads
+            - **Windows** — download the `.exe` installer below
+            - **Mac** — download the `.dmg` installer below
+
+            ### Installation
+            **Windows:** Run the installer and follow the prompts. A desktop shortcut will be created automatically.
+            **Mac:** Open the `.dmg`, drag the app to your Applications folder.
+
+            ### Notes
+            - Your data is stored locally — no account needed
+            - Works fully offline (AI suggestions require an Anthropic API key)
+          files: |
+            installers/windows/**/*.exe
+            installers/mac/**/*.dmg
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

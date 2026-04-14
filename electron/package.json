@@ -6,8 +6,7 @@
   "scripts": {
     "start": "electron .",
     "build:win": "electron-builder --win",
-    "build:mac": "electron-builder --mac",
-    "build:all": "electron-builder --win --mac"
+    "build:mac": "electron-builder --mac"
   },
   "build": {
     "appId": "com.diamond8658.relationship-graph",
@@ -19,16 +18,8 @@
       "main.js",
       "frontend/**/*"
     ],
-    "extraResources": [
-      {
-        "from": "../backend/dist/rg-server",
-        "to": "backend/rg-server",
-        "filter": ["**/*"]
-      }
-    ],
     "win": {
       "target": "nsis",
-      "icon": "icons/icon.ico",
       "extraResources": [
         {
           "from": "../backend/dist/rg-server.exe",
@@ -38,7 +29,6 @@
     },
     "mac": {
       "target": "dmg",
-      "icon": "icons/icon.icns",
       "extraResources": [
         {
           "from": "../backend/dist/rg-server",
