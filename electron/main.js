@@ -116,6 +116,7 @@ function showLoadingWindow() {
     backgroundColor: '#f7f7f7',
   });
 
+  mainWindow.on('closed', () => { mainWindow = null; });
   mainWindow.loadURL(`data:text/html;charset=utf-8,
     <html>
     <body style="margin:0;font-family:system-ui;display:flex;flex-direction:column;
@@ -211,6 +212,8 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  // Don't hide/quit during startup — let the backend wait logic handle it
+  if (!app.isReady()) return;
   if (process.platform !== 'darwin') {
     if (mainWindow) mainWindow.hide();
   }
