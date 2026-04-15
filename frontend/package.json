@@ -1,5 +1,6 @@
 {
   "name": "relationship-graph-frontend",
+  "homepage": ".",
   "version": "1.0.0",
   "private": true,
   "dependencies": {
