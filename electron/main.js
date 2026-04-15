@@ -22,6 +22,24 @@ function getDbPath() {
   return path.join(app.getPath('userData'), 'relationship_graph.db');
 }
 
+function killPortSync(port) {
+  // Synchronously kill any process already bound to the port before spawning.
+  // This prevents EADDRINUSE errors when the app is relaunched after a crash.
+  try {
+    const { execSync } = require('child_process');
+    if (process.platform === 'win32') {
+      const result = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+      const lines = result.split('\n').filter(l => l.includes('LISTENING'));
+      lines.forEach(line => {
+        const pid = line.trim().split(/\s+/).pop();
+        if (pid && !isNaN(pid)) {
+          try { execSync(`taskkill /PID ${pid} /F`, { stdio: 'ignore' }); } catch {}
+        }
+      });
+    }
+  } catch {}
+}
+
 function startBackend() {
   if (isDev) {
     console.log('Dev mode: start backend manually with uvicorn');
@@ -38,6 +56,9 @@ function startBackend() {
     dialog.showErrorBox('Relationship Graph — Startup Error', msg);
     return;
   }
+
+  // Kill any orphaned backend process from a previous launch
+  killPortSync(PORT);
 
   console.log('Starting backend:', backendExe);
   console.log('DB path:', dbPath);
@@ -122,9 +143,8 @@ function showLoadingWindow() {
     <body style="margin:0;font-family:system-ui;display:flex;flex-direction:column;
                  align-items:center;justify-content:center;height:100vh;
                  background:%23f7f7f7;color:%23333;user-select:none;">
-      <div style="font-size:32px;margin-bottom:16px;">&#128279;</div>
       <div style="font-size:18px;font-weight:600;margin-bottom:8px;">Relationship Graph</div>
-      <div style="font-size:13px;color:%23888;">Starting up&hellip;</div>
+      <div style="font-size:13px;color:%23888;">Starting up...</div>
     </body>
     </html>
   `);
