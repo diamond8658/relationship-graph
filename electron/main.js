@@ -176,6 +176,9 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  // Temporary: open DevTools to diagnose white screen
+  mainWindow.webContents.openDevTools();
+
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
