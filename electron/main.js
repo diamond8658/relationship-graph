@@ -101,7 +101,7 @@ function stopBackend() {
 function waitForBackend(retries = 40, delay = 500) {
   return new Promise((resolve, reject) => {
     function attempt(remaining) {
-      http.get(`http://localhost:${PORT}/people`, res => {
+      http.get(`http://127.0.0.1:${PORT}/people`, res => {
         if (res.statusCode < 500) {
           console.log('Backend ready');
           resolve();

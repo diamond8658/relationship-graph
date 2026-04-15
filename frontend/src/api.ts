@@ -5,7 +5,7 @@
 
 import { Person, RelationshipData, TimelineEntry, Interest, Tag } from "./types";
 
-const BASE = "http://localhost:8000";
+const BASE = "http://127.0.0.1:8000";
 
 // Generic fetch wrapper — throws on non-OK responses with the backend's detail message.
 async function req<T>(path: string, options?: RequestInit): Promise<T> {
