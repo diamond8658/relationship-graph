@@ -83,13 +83,14 @@ export default function App() {
   // ── Event handlers ─────────────────────────────────────────────────────────
 
   // Create a new person and place it near the canvas center.
-  const handleAddPerson = async (name: string, _group: string) => {
+  const handleAddPerson = async (name: string, group: string) => {
     const W = window.innerWidth - 280, H = window.innerHeight - 60;
     const angle = Math.random() * Math.PI * 2;
     const r = Math.min(W, H) * 0.3;
     try {
       const person = await api.createPerson({
         name,
+        primary_tag: group || undefined,
         x: W / 2 + r * Math.cos(angle),
         y: H / 2 + r * Math.sin(angle),
       });
@@ -128,7 +129,7 @@ export default function App() {
   // Trigger a JSON download of the full graph data from the export endpoint.
   const handleExport = async () => {
     try {
-      const res = await fetch("http://localhost:8000/export");
+      const res = await fetch("http://127.0.0.1:8000/export");
       const data = await res.json();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);

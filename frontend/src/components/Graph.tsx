@@ -747,7 +747,8 @@ export const Graph: React.FC<GraphProps> = ({
     path.setAttribute("d", `M${x1},${y1} Q${cpx},${cpy} ${x2},${y2}`);
     path.setAttribute("fill", "none"); path.setAttribute("stroke", col);
     path.setAttribute("stroke-width", "2.5"); path.setAttribute("opacity", String(opacity));
-    path.setAttribute("marker-end", "url(#rg-arr)");
+    const sentimentKey = Object.entries(SENTIMENT_COLORS).find(([,c]) => c === col)?.[0] || "neutral";
+    path.setAttribute("marker-end", `url(#rg-arr-${sentimentKey})`);
     layer.appendChild(path);
 
     if (label) {
@@ -862,9 +863,19 @@ export const Graph: React.FC<GraphProps> = ({
         onMouseDown={handlePanStart}
       >
         <defs>
-          <marker id="rg-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-            <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </marker>
+          {Object.entries(SENTIMENT_COLORS).map(([sentiment, color]) => (
+            <marker
+              key={sentiment}
+              id={`rg-arr-${sentiment}`}
+              viewBox="0 0 10 10"
+              refX="8" refY="5"
+              markerWidth="5" markerHeight="5"
+              orient="auto-start-reverse"
+            >
+              <path d="M2 1L8 5L2 9" fill="none" stroke={color}
+                strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </marker>
+          ))}
         </defs>
         <g id="transform-root" transform={`translate(${transformState.x},${transformState.y}) scale(${transformState.scale})`}>
           <g id="edges" />
