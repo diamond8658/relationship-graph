@@ -1,7 +1,8 @@
-const { app, BrowserWindow, shell, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, shell, Tray, Menu, nativeImage, dialog } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
+const fs = require('fs');
 
 let mainWindow;
 let tray;
@@ -12,17 +13,12 @@ const isDev = !app.isPackaged;
 // ── Backend ───────────────────────────────────────────────────────────────────
 
 function getBackendPath() {
-  if (isDev) {
-    // In dev, run python directly
-    return null;
-  }
-  // In production, use the bundled exe (Windows) or binary (Mac)
+  if (isDev) return null;
   const ext = process.platform === 'win32' ? 'rg-server.exe' : 'rg-server';
   return path.join(process.resourcesPath, 'backend', ext);
 }
 
 function getDbPath() {
-  // Store DB in user data directory so it persists across updates
   return path.join(app.getPath('userData'), 'relationship_graph.db');
 }
 
@@ -35,20 +31,41 @@ function startBackend() {
   const backendExe = getBackendPath();
   const dbPath = getDbPath();
 
+  // Check the exe actually exists before trying to spawn it
+  if (!fs.existsSync(backendExe)) {
+    const msg = `Backend executable not found at:\n${backendExe}\n\nThe application may not have installed correctly.`;
+    console.error(msg);
+    dialog.showErrorBox('Relationship Graph — Startup Error', msg);
+    return;
+  }
+
   console.log('Starting backend:', backendExe);
+  console.log('DB path:', dbPath);
 
   backendProcess = spawn(backendExe, [], {
-    env: {
-      ...process.env,
-      DB_PATH: dbPath,
-    },
+    env: { ...process.env, DB_PATH: dbPath },
     windowsHide: true,
   });
 
-  backendProcess.stdout?.on('data', d => console.log('[backend]', d.toString()));
-  backendProcess.stderr?.on('data', d => console.error('[backend]', d.toString()));
-  backendProcess.on('error', err => console.error('Backend failed to start:', err));
-  backendProcess.on('exit', code => console.log('Backend exited with code:', code));
+  backendProcess.stdout?.on('data', d => console.log('[backend]', d.toString().trim()));
+  backendProcess.stderr?.on('data', d => console.error('[backend stderr]', d.toString().trim()));
+  backendProcess.on('error', err => {
+    console.error('Backend failed to start:', err);
+    dialog.showErrorBox(
+      'Relationship Graph — Backend Error',
+      `Failed to start backend process:\n${err.message}\n\nPath: ${backendExe}`
+    );
+  });
+  backendProcess.on('exit', (code, signal) => {
+    console.log(`Backend exited — code: ${code}, signal: ${signal}`);
+    if (mainWindow && code !== 0 && code !== null) {
+      dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        title: 'Backend Stopped',
+        message: `The backend process stopped unexpectedly (exit code ${code}).\n\nTry restarting the application.`,
+      });
+    }
+  });
 }
 
 function stopBackend() {
@@ -60,16 +77,24 @@ function stopBackend() {
 
 // ── Wait for backend to be ready ──────────────────────────────────────────────
 
-function waitForBackend(retries = 30, delay = 500) {
+function waitForBackend(retries = 40, delay = 500) {
   return new Promise((resolve, reject) => {
     function attempt(remaining) {
       http.get(`http://localhost:${PORT}/people`, res => {
-        if (res.statusCode < 500) resolve();
-        else if (remaining > 0) setTimeout(() => attempt(remaining - 1), delay);
-        else reject(new Error('Backend did not start in time'));
-      }).on('error', () => {
-        if (remaining > 0) setTimeout(() => attempt(remaining - 1), delay);
-        else reject(new Error('Backend did not start in time'));
+        if (res.statusCode < 500) {
+          console.log('Backend ready');
+          resolve();
+        } else if (remaining > 0) {
+          setTimeout(() => attempt(remaining - 1), delay);
+        } else {
+          reject(new Error(`Backend returned status ${res.statusCode}`));
+        }
+      }).on('error', err => {
+        if (remaining > 0) {
+          setTimeout(() => attempt(remaining - 1), delay);
+        } else {
+          reject(new Error(`Backend unreachable: ${err.message}`));
+        }
       });
     }
     attempt(retries);
@@ -77,6 +102,32 @@ function waitForBackend(retries = 30, delay = 500) {
 }
 
 // ── Window ────────────────────────────────────────────────────────────────────
+
+function showLoadingWindow() {
+  mainWindow = new BrowserWindow({
+    width: 400,
+    height: 220,
+    resizable: false,
+    frame: false,
+    center: true,
+    title: 'Relationship Graph',
+    webPreferences: { nodeIntegration: false, contextIsolation: true },
+    autoHideMenuBar: true,
+    backgroundColor: '#f7f7f7',
+  });
+
+  mainWindow.loadURL(`data:text/html;charset=utf-8,
+    <html>
+    <body style="margin:0;font-family:system-ui;display:flex;flex-direction:column;
+                 align-items:center;justify-content:center;height:100vh;
+                 background:%23f7f7f7;color:%23333;user-select:none;">
+      <div style="font-size:32px;margin-bottom:16px;">&#128279;</div>
+      <div style="font-size:18px;font-weight:600;margin-bottom:8px;">Relationship Graph</div>
+      <div style="font-size:13px;color:%23888;">Starting up&hellip;</div>
+    </body>
+    </html>
+  `);
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -89,7 +140,6 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
     },
-    // Remove default menu bar
     autoHideMenuBar: true,
   });
 
@@ -100,7 +150,6 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, 'frontend', 'index.html'));
   }
 
-  // Open external links in browser, not Electron
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
@@ -110,7 +159,6 @@ function createWindow() {
 }
 
 function createTray() {
-  // Simple tray icon — blank 16x16 for now
   const icon = nativeImage.createEmpty();
   tray = new Tray(icon);
   const menu = Menu.buildFromTemplate([
@@ -126,15 +174,35 @@ function createTray() {
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
+  // Show a loading screen immediately so the user sees something
+  showLoadingWindow();
+
   startBackend();
 
   try {
     await waitForBackend();
+    // Backend is up — close loading screen and open the real app
+    if (mainWindow) mainWindow.close();
+    mainWindow = null;
+    createWindow();
   } catch (e) {
-    console.error('Backend unavailable:', e.message);
+    console.error('Backend failed to become ready:', e.message);
+    if (mainWindow) mainWindow.close();
+    mainWindow = null;
+
+    const backendExe = getBackendPath();
+    dialog.showErrorBox(
+      'Relationship Graph — Could Not Start',
+      `The backend server did not start in time.\n\n` +
+      `Error: ${e.message}\n\n` +
+      `Backend path: ${backendExe}\n` +
+      `Exists: ${backendExe ? fs.existsSync(backendExe) : 'N/A (dev mode)'}\n\n` +
+      `Try restarting the application. If this keeps happening, ` +
+      `check that your antivirus is not blocking rg-server.exe.`
+    );
+    app.quit();
   }
 
-  createWindow();
   createTray();
 
   app.on('activate', () => {
@@ -143,9 +211,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  // On Mac, keep app running in tray
   if (process.platform !== 'darwin') {
-    // On Windows/Linux, hide to tray instead of quitting
     if (mainWindow) mainWindow.hide();
   }
 });
