@@ -166,8 +166,7 @@ function createWindow() {
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:3000');
-    mainWindow.webContents.openDevTools();
-  } else {
+    } else {
     mainWindow.loadFile(path.join(__dirname, 'frontend', 'index.html'));
   }
 
@@ -175,9 +174,6 @@ function createWindow() {
     shell.openExternal(url);
     return { action: 'deny' };
   });
-
-  // Temporary: open DevTools to diagnose white screen
-  mainWindow.webContents.openDevTools();
 
   mainWindow.on('closed', () => { mainWindow = null; });
 }
@@ -188,7 +184,7 @@ function createTray() {
   const menu = Menu.buildFromTemplate([
     { label: 'Open', click: () => { if (mainWindow) mainWindow.show(); else createWindow(); } },
     { type: 'separator' },
-    { label: 'Quit', click: () => app.quit() },
+    { label: 'Quit', click: () => { stopBackend(); app.quit(); } },
   ]);
   tray.setToolTip('Relationship Graph');
   tray.setContextMenu(menu);
@@ -238,10 +234,17 @@ app.on('window-all-closed', () => {
   // Don't hide/quit during startup — let the backend wait logic handle it
   if (!app.isReady()) return;
   if (process.platform !== 'darwin') {
+    // Hide to tray but keep backend running so it's ready when user reopens
     if (mainWindow) mainWindow.hide();
   }
 });
 
 app.on('before-quit', () => {
+  // Kill the backend process when the app fully quits (via tray menu Quit)
   stopBackend();
 });
+
+// Also stop backend if Electron is force-killed or crashes
+process.on('exit', () => stopBackend());
+process.on('SIGTERM', () => { stopBackend(); process.exit(0); });
+process.on('SIGINT', () => { stopBackend(); process.exit(0); });
