@@ -212,13 +212,10 @@ function createTray() {
   const icon = nativeImage.createEmpty();
   tray = new Tray(icon);
   const menu = Menu.buildFromTemplate([
-    { label: 'Open', click: () => { if (mainWindow) mainWindow.show(); else createWindow(); } },
-    { type: 'separator' },
     { label: 'Quit', click: () => { stopBackend(); app.quit(); } },
   ]);
   tray.setToolTip('Relationship Graph');
   tray.setContextMenu(menu);
-  tray.on('click', () => { if (mainWindow) mainWindow.show(); });
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
@@ -261,16 +258,16 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  // Don't hide/quit during startup — let the backend wait logic handle it
-  if (!app.isReady()) return;
+  // On Windows/Linux: quit the app when the window is closed.
+  // Hiding to tray caused Electron process accumulation across launches.
+  // Mac keeps the app running in the dock as is conventional.
   if (process.platform !== 'darwin') {
-    // Hide to tray but keep backend running so it's ready when user reopens
-    if (mainWindow) mainWindow.hide();
+    stopBackend();
+    app.quit();
   }
 });
 
 app.on('before-quit', () => {
-  // Kill the backend process when the app fully quits (via tray menu Quit)
   stopBackend();
 });
 
