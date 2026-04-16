@@ -407,7 +407,7 @@ export const Graph: React.FC<GraphProps> = ({
 
     // Cluster centers arranged evenly around Me
     // Spoke radius scales with cluster count and canvas size
-    const spokeR = Math.min(W, H) * (numClusters <= 2 ? 0.42 : 0.36);
+    const spokeR = Math.min(W, H) * (numClusters <= 2 ? 0.48 : 0.40);
     const clusterCenters: Record<string, { x: number; y: number }> = {};
     // Sort clusters: named groups first (alphabetically), ungrouped last
     const sortedClusterKeys = [...clusterKeys].sort((a, b) => {
@@ -504,9 +504,9 @@ export const Graph: React.FC<GraphProps> = ({
     });
 
         // ── Repulsion-only settle to resolve overlaps ────────────────────────────
-    const REPULSION = 15000;
+    const REPULSION = 25000;
     const DAMPING = 0.7;
-    const ITERATIONS = 80;
+    const ITERATIONS = 120;
     const STEPS_PER_FRAME = 8;
     const vel: Record<string, { x: number; y: number }> = {};
     ids.forEach(id => { vel[id] = { x: 0, y: 0 }; });
@@ -528,7 +528,7 @@ export const Graph: React.FC<GraphProps> = ({
             if (!a || !b) continue;
             const dx = b.x - a.x, dy = b.y - a.y;
             const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-            if (dist > 200) continue; // only push if too close
+            if (dist > 350) continue; // only push if too close
             const f = REPULSION / (dist * dist);
             const ux = dx / dist, uy = dy / dist;
             force[ids[i]].x -= ux * f; force[ids[i]].y -= uy * f;
