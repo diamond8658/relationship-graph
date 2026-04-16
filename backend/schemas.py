@@ -70,6 +70,12 @@ class PersonBase(BaseModel):
     linkedin: str = ""
     photo: str = ""
     description: str = ""
+    birthday: str = ""
+    twitter: str = ""
+    instagram: str = ""
+    github: str = ""
+    website: str = ""
+    skills: str = ""
 
 class PersonCreate(PersonBase):
     x: float = 0.0
@@ -85,6 +91,12 @@ class PersonUpdate(BaseModel):
     email: Optional[str] = None
     linkedin: Optional[str] = None
     photo: Optional[str] = None
+    birthday: Optional[str] = None
+    twitter: Optional[str] = None
+    instagram: Optional[str] = None
+    github: Optional[str] = None
+    website: Optional[str] = None
+    skills: Optional[str] = None
 
 class PersonOut(PersonBase):
     id: str
@@ -138,6 +150,12 @@ class ExportPerson(BaseModel):
     linkedin: str
     description: str
     photo: str
+    birthday: str
+    twitter: str
+    instagram: str
+    github: str
+    website: str
+    skills: str
     x: float
     y: float
     tags: List[ExportTag]

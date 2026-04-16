@@ -76,6 +76,12 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({
   const [phone, setPhone] = useState(person.phone || "");
   const [email, setEmail] = useState(person.email || "");
   const [linkedin, setLinkedin] = useState(person.linkedin || "");
+  const [birthday, setBirthday] = useState(person.birthday || "");
+  const [twitter, setTwitter] = useState(person.twitter || "");
+  const [instagram, setInstagram] = useState(person.instagram || "");
+  const [github, setGithub] = useState(person.github || "");
+  const [website, setWebsite] = useState(person.website || "");
+  const [skills, setSkills] = useState(person.skills || "");
   const [photoUrl, setPhotoUrl] = useState(person.photo || "");
   const [description, setDescription] = useState(person.description || "");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
@@ -109,6 +115,9 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({
     setOccupation(person.occupation || ""); setCompany(person.company || "");
     setLocation(person.location || ""); setPhone(person.phone || "");
     setEmail(person.email || ""); setLinkedin(person.linkedin || "");
+    setBirthday(person.birthday || ""); setTwitter(person.twitter || "");
+    setInstagram(person.instagram || ""); setGithub(person.github || "");
+    setWebsite(person.website || ""); setSkills(person.skills || "");
     setPhotoUrl(person.photo || ""); setDescription(person.description || "");
     setLocalTimeline(person.timeline || []);
     setSaveStatus("idle");
@@ -266,7 +275,29 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({
             <input value={phone} onChange={e => setPhone(e.target.value)} onBlur={() => autoSave({ phone })} placeholder="Phone" style={inputStyle} />
             <input value={email} onChange={e => setEmail(e.target.value)} onBlur={() => autoSave({ email })} placeholder="Email" style={inputStyle} />
             <input value={linkedin} onChange={e => setLinkedin(e.target.value)} onBlur={() => autoSave({ linkedin })} placeholder="LinkedIn URL" style={inputStyle} />
+            <input value={website} onChange={e => setWebsite(e.target.value)} onBlur={() => autoSave({ website })} placeholder="Website URL" style={inputStyle} />
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <label style={{ fontSize: 11, color: "#aaa", whiteSpace: "nowrap" }}>Birthday</label>
+              <input type="date" value={birthday} onChange={e => setBirthday(e.target.value)} onBlur={() => autoSave({ birthday })} style={{ ...inputStyle, flex: 1 }} />
+            </div>
           </div>
+        </div>
+
+        {/* Social */}
+        <div>
+          <div style={sectionLabel}>Social</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <input value={twitter} onChange={e => setTwitter(e.target.value)} onBlur={() => autoSave({ twitter })} placeholder="Twitter / X" style={inputStyle} />
+            <input value={instagram} onChange={e => setInstagram(e.target.value)} onBlur={() => autoSave({ instagram })} placeholder="Instagram" style={inputStyle} />
+            <input value={github} onChange={e => setGithub(e.target.value)} onBlur={() => autoSave({ github })} placeholder="GitHub" style={inputStyle} />
+          </div>
+        </div>
+
+        {/* Skills */}
+        <div>
+          <div style={sectionLabel}>Skills</div>
+          <input value={skills} onChange={e => setSkills(e.target.value)} onBlur={() => autoSave({ skills })} placeholder="e.g. Python, design, public speaking" style={inputStyle} />
+          <div style={{ fontSize: 10, color: "#aaa", marginTop: 3 }}>Comma-separated</div>
         </div>
 
         {/* Description */}

@@ -33,6 +33,12 @@ class Person(Base):
     linkedin = Column(String, default="")
     photo = Column(Text, default="")               # Base64 or remote URL
     description = Column(Text, default="")         # Freeform traits/notes
+    birthday = Column(String, default="")          # ISO date string YYYY-MM-DD
+    twitter = Column(String, default="")           # Twitter/X handle or URL
+    instagram = Column(String, default="")         # Instagram handle or URL
+    github = Column(String, default="")            # GitHub handle or URL
+    website = Column(String, default="")           # Personal website URL
+    skills = Column(Text, default="")              # Comma-separated skill list
     x = Column(Float, default=0.0)                 # Canvas position
     y = Column(Float, default=0.0)
 
