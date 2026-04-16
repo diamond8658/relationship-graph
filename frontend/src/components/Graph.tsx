@@ -433,30 +433,16 @@ export const Graph: React.FC<GraphProps> = ({
       if (members.length === 1) {
         positionsRef.current[members[0]] = { x: center.x, y: center.y };
       } else {
-        // With multiple clusters: arc facing away from center keeps clusters tidy
-        // With one cluster: full circle so nodes don't bunch into a line
+        // Always use a full circle — arcs cause line formation when cluster
+        // center is directly above/below Me. Full circle is always readable.
         const innerR = Math.max(110, 70 * members.length / (2 * Math.PI) * 2.5);
-        if (numClusters === 1) {
-          // Full circle — evenly space all nodes around the cluster center
-          members.forEach((id, i) => {
-            const angle = (2 * Math.PI * i / members.length) - Math.PI / 2;
-            positionsRef.current[id] = {
-              x: center.x + innerR * Math.cos(angle),
-              y: center.y + innerR * Math.sin(angle),
-            };
-          });
-        } else {
-          // Arc facing away from canvas center — max 270° so nodes spread wide
-          const facingAngle = Math.atan2(center.y - cy, center.x - cx);
-          const arcSpan = Math.min(Math.PI * 1.5, Math.PI * 0.45 * members.length);
-          members.forEach((id, i) => {
-            const angle = facingAngle - arcSpan / 2 + arcSpan * (i / (members.length - 1));
-            positionsRef.current[id] = {
-              x: center.x + innerR * Math.cos(angle),
-              y: center.y + innerR * Math.sin(angle),
-            };
-          });
-        }
+        members.forEach((id, i) => {
+          const angle = (2 * Math.PI * i / members.length) - Math.PI / 2;
+          positionsRef.current[id] = {
+            x: center.x + innerR * Math.cos(angle),
+            y: center.y + innerR * Math.sin(angle),
+          };
+        });
       }
     });
 
