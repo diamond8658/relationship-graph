@@ -7,7 +7,39 @@ on:
   workflow_dispatch:
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install
+
+      - name: TypeScript type-check
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Backend import smoke test
+        working-directory: backend
+        run: python -c "from main import app; print('Backend imports OK')"
+
   build-windows:
+    needs: validate
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +91,7 @@ jobs:
           path: dist/**/*.exe
 
   build-mac:
+    needs: validate
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -147,7 +180,7 @@ jobs:
           files: |
             installers/windows/**/*.exe
             installers/mac/**/*.dmg
-          draft: false
+          draft: true
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
