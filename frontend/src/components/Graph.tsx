@@ -433,11 +433,20 @@ export const Graph: React.FC<GraphProps> = ({
       if (members.length === 1) {
         positionsRef.current[members[0]] = { x: center.x, y: center.y };
       } else {
-        // Always use a full circle — arcs cause line formation when cluster
-        // center is directly above/below Me. Full circle is always readable.
+        // Place nodes in a full circle around the cluster center.
+        // Rotate the starting angle by the spoke direction so the cluster
+        // fans outward from Me — this prevents nodes from ever forming a
+        // straight line through the canvas center.
         const innerR = Math.max(110, 70 * members.length / (2 * Math.PI) * 2.5);
+        // Angle from canvas center to this cluster center (the "spoke" direction)
+        const spokeAngle = Math.atan2(center.y - cy, center.x - cx);
+        // Add a golden-ratio offset so clusters at similar spoke angles don't align
+        const goldenAngle = Math.PI * (3 - Math.sqrt(5)); // ~137.5°
         members.forEach((id, i) => {
-          const angle = (2 * Math.PI * i / members.length) - Math.PI / 2;
+          // Start the circle rotated so the first node points along the spoke,
+          // then distribute remaining nodes using golden-ratio spacing to avoid
+          // any three nodes landing on the same line
+          const angle = spokeAngle + (2 * Math.PI * i / members.length) + (i * goldenAngle * 0.1);
           positionsRef.current[id] = {
             x: center.x + innerR * Math.cos(angle),
             y: center.y + innerR * Math.sin(angle),
