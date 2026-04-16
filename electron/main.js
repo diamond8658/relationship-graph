@@ -90,23 +90,39 @@ function startBackend() {
 }
 
 function stopBackend() {
-  if (backendProcess) {
-    const pid = backendProcess.pid;
-    backendProcess = null;
+  const { execSync } = require('child_process');
+  const pid = backendProcess?.pid || null;
+  backendProcess = null;
+
+  if (process.platform === 'win32') {
+    // Kill by PID tree first (fastest)
     if (pid) {
-      try {
-        if (process.platform === 'win32') {
-          // Force-kill the entire process tree — rg-server.exe spawns child
-          // processes that survive a simple SIGTERM
-          const { execSync } = require('child_process');
-          execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
-        } else {
-          process.kill(pid, 'SIGKILL');
-        }
-      } catch (e) {
-        // Process may already be gone — ignore
-      }
+      try { execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' }); } catch {}
     }
+    // Belt-and-suspenders: also kill anything still on port 8000
+    // Catches orphaned processes if PID reference went stale
+    try {
+      const result = execSync(`netstat -ano | findstr :${PORT}`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+      result.split('\n')
+        .filter(l => l.includes('LISTENING') || l.includes('ESTABLISHED'))
+        .forEach(line => {
+          const p = line.trim().split(/\s+/).pop();
+          if (p && !isNaN(Number(p))) {
+            try { execSync(`taskkill /PID ${p} /T /F`, { stdio: 'ignore' }); } catch {}
+          }
+        });
+    } catch {}
+  } else {
+    // Mac/Linux: kill by PID, then fall back to lsof
+    if (pid) {
+      try { process.kill(pid, 'SIGKILL'); } catch {}
+    }
+    try {
+      const result = execSync(`lsof -ti :${PORT}`, { encoding: 'utf8' });
+      result.trim().split('\n').forEach(p => {
+        if (p) try { execSync(`kill -9 ${p}`, { stdio: 'ignore' }); } catch {}
+      });
+    } catch {}
   }
 }
 
