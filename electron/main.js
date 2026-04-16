@@ -91,8 +91,22 @@ function startBackend() {
 
 function stopBackend() {
   if (backendProcess) {
-    backendProcess.kill();
+    const pid = backendProcess.pid;
     backendProcess = null;
+    if (pid) {
+      try {
+        if (process.platform === 'win32') {
+          // Force-kill the entire process tree — rg-server.exe spawns child
+          // processes that survive a simple SIGTERM
+          const { execSync } = require('child_process');
+          execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
+        } else {
+          process.kill(pid, 'SIGKILL');
+        }
+      } catch (e) {
+        // Process may already be gone — ignore
+      }
+    }
   }
 }
 
