@@ -597,7 +597,16 @@ export const Graph: React.FC<GraphProps> = ({
         const other = byId[rel.to_id];
         if (!other) return;
         const bPos = positionsRef.current[rel.to_id] || { x: other.x, y: other.y };
-        const dim = filterText && !person.name.toLowerCase().includes(filterText) && !other.name.toLowerCase().includes(filterText);
+        const ft2 = filterText.toLowerCase();
+        const personMatched = !filterText ||
+          person.name.toLowerCase().includes(ft2) ||
+          (person.primary_tag && person.primary_tag.toLowerCase().includes(ft2)) ||
+          person.tags.some((t: any) => t.label.toLowerCase().includes(ft2));
+        const otherMatched = !filterText ||
+          other.name.toLowerCase().includes(ft2) ||
+          (other.primary_tag && other.primary_tag.toLowerCase().includes(ft2)) ||
+          other.tags.some((t: any) => t.label.toLowerCase().includes(ft2));
+        const dim = filterText && !personMatched && !otherMatched;
 
         const reverse = other.outgoing.find(r => r.to_id === person.id);
         const isBidirectional = !!reverse;
@@ -608,7 +617,12 @@ export const Graph: React.FC<GraphProps> = ({
 
     people.forEach(person => {
       const pos = positionsRef.current[person.id] || { x: person.x, y: person.y };
-      const matched = !filterText || person.name.toLowerCase().includes(filterText.toLowerCase());
+      // Match against name, primary_tag, and all freeform tags
+      const ft = filterText.toLowerCase();
+      const matched = !filterText || 
+        person.name.toLowerCase().includes(ft) ||
+        (person.primary_tag && person.primary_tag.toLowerCase().includes(ft)) ||
+        person.tags.some((t: any) => t.label.toLowerCase().includes(ft));
       // "Me" node gets a special gold color
       const isMe = person.primary_tag?.toLowerCase() === "me";
       const c = isMe
@@ -618,7 +632,13 @@ export const Graph: React.FC<GraphProps> = ({
       g.setAttribute("transform", `translate(${pos.x},${pos.y})`);
       g.setAttribute("class", "rg-node");
       g.style.cursor = "pointer";
-      if (!matched) g.setAttribute("opacity", "0.15");
+      if (!matched) {
+        g.setAttribute("opacity", "0.12");
+        g.setAttribute("filter", "grayscale(1)");
+      } else if (filterText) {
+        // Slightly boost matched nodes when filter is active so they pop
+        g.setAttribute("filter", "drop-shadow(0 0 6px rgba(55,138,221,0.5))");
+      }
 
       if (person.photo) {
         const clipId = "clip-" + person.id.replace(/\W/g, "_");
