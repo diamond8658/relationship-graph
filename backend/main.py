@@ -16,6 +16,34 @@ from database import engine, get_db
 
 models.Base.metadata.create_all(bind=engine)
 
+# ── Auto-migration ────────────────────────────────────────────────────────────
+# Adds any new columns to existing tables without wiping data.
+# Safe to run on every startup — skips columns that already exist.
+
+def run_migrations():
+    import sqlite3
+    # Use the same DB_PATH logic as database.py
+    db_path = os.environ.get("DB_PATH", "./relationship_graph.db")
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(people)")
+    existing = {row[1] for row in cur.fetchall()}
+    new_columns = [
+        ("birthday",  "TEXT DEFAULT ''"),
+        ("twitter",   "TEXT DEFAULT ''"),
+        ("instagram", "TEXT DEFAULT ''"),
+        ("github",    "TEXT DEFAULT ''"),
+        ("website",   "TEXT DEFAULT ''"),
+        ("skills",    "TEXT DEFAULT ''"),
+    ]
+    for col, coltype in new_columns:
+        if col not in existing:
+            cur.execute(f"ALTER TABLE people ADD COLUMN {col} {coltype}")
+    conn.commit()
+    conn.close()
+
+run_migrations()
+
 app = FastAPI(title="Relationship Graph API")
 
 app.add_middleware(
@@ -306,6 +334,12 @@ def export_data(db: Session = Depends(get_db)):
                 linkedin=p.linkedin or "",
                 description=p.description or "",
                 photo=p.photo or "",
+                birthday=p.birthday or "",
+                twitter=p.twitter or "",
+                instagram=p.instagram or "",
+                github=p.github or "",
+                website=p.website or "",
+                skills=p.skills or "",
                 x=p.x,
                 y=p.y,
                 tags=[schemas.ExportTag(id=t.id, label=t.label) for t in p.tags],
