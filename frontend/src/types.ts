@@ -50,6 +50,12 @@ export interface Person {
   linkedin: string;
   photo: string;          // Base64 data URL or remote URL
   description: string;    // Freeform traits/notes without a date
+  birthday: string;       // ISO date string YYYY-MM-DD
+  twitter: string;        // Twitter/X handle or URL
+  instagram: string;      // Instagram handle or URL
+  github: string;         // GitHub handle or URL
+  website: string;        // Personal website URL
+  skills: string;         // Comma-separated skill list
   x: number;              // Canvas X position (saved to DB)
   y: number;              // Canvas Y position (saved to DB)
   tags: Tag[];
