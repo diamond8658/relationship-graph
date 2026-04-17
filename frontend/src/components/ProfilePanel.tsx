@@ -8,16 +8,7 @@ const SENTIMENT_COLORS: Record<string, string> = {
 };
 const SENTIMENTS: Sentiment[] = ['hates', 'dislikes', 'neutral', 'likes', 'loves'];
 
-const PALETTE = ["#378ADD","#1D9E75","#D85A30","#7F77DD","#BA7517","#D4537E","#639922","#E24B4A"];
-const PALETTE_LIGHT = ["#E6F1FB","#E1F5EE","#FAECE7","#EEEDFE","#FAEEDA","#FBEAF0","#EAF3DE","#FCEBEB"];
-const PALETTE_TEXT = ["#042C53","#04342C","#4A1B0C","#26215C","#412402","#4B1528","#173404","#501313"];
-const groupColorIdx: Record<string, number> = {};
-let colorIdx = 0;
-function gc(group: string) {
-  if (groupColorIdx[group] === undefined) { groupColorIdx[group] = colorIdx++ % PALETTE.length; }
-  const i = groupColorIdx[group];
-  return { fill: PALETTE[i], light: PALETTE_LIGHT[i], text: PALETTE_TEXT[i] };
-}
+import { personColors } from "../colors";
 
 const sectionLabel: React.CSSProperties = {
   fontSize: 10, color: "#aaa", textTransform: "uppercase" as const,
@@ -107,7 +98,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = ({
   const [relLabel, setRelLabel] = useState("");
   const [relSentiment, setRelSentiment] = useState<Sentiment>("neutral");
 
-  const c = gc(person.primary_tag || person.name);
+  const c = personColors(person.primary_tag || "", person.name);
   const initials = person.name.split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2);
 
   useEffect(() => {

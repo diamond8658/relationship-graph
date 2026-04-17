@@ -2,12 +2,7 @@ import React, { useRef, useEffect, useCallback } from "react";
 import { Person } from "../types";
 import { api } from "../api";
 
-const PALETTE = ["#378ADD","#1D9E75","#D85A30","#7F77DD","#BA7517","#D4537E","#639922","#E24B4A"];
-const PALETTE_LIGHT = ["#E6F1FB","#E1F5EE","#FAECE7","#EEEDFE","#FAEEDA","#FBEAF0","#EAF3DE","#FCEBEB"];
-const PALETTE_TEXT = ["#042C53","#04342C","#4A1B0C","#26215C","#412402","#4B1528","#173404","#501313"];
-
-const groupColorIdx: Record<string, number> = {};
-let colorIdx = 0;
+import { personColors } from "../colors";
 const SENTIMENT_COLORS: Record<string, string> = {
   hates: '#7C0A02',
   dislikes: '#ff6e00',
@@ -16,12 +11,6 @@ const SENTIMENT_COLORS: Record<string, string> = {
   loves: '#4b0082',
 };
 function sentimentColor(s: string) { return SENTIMENT_COLORS[s] || SENTIMENT_COLORS.neutral; }
-
-function gc(group: string) {
-  if (groupColorIdx[group] === undefined) { groupColorIdx[group] = colorIdx++ % PALETTE.length; }
-  const i = groupColorIdx[group];
-  return { fill: PALETTE[i], light: PALETTE_LIGHT[i], text: PALETTE_TEXT[i] };
-}
 
 interface GraphProps {
   people: Person[];
@@ -624,10 +613,8 @@ export const Graph: React.FC<GraphProps> = ({
         (person.primary_tag && person.primary_tag.toLowerCase().includes(ft)) ||
         person.tags.some((t: any) => t.label.toLowerCase().includes(ft));
       // "Me" node gets a special gold color
+      const c = personColors(person.primary_tag || "", person.name);
       const isMe = person.primary_tag?.toLowerCase() === "me";
-      const c = isMe
-        ? { fill: "#F59E0B", light: "#FEF3C7", text: "#78350F" }
-        : gc(person.primary_tag || person.name);
       const g = document.createElementNS(ns, "g") as SVGGElement;
       g.setAttribute("transform", `translate(${pos.x},${pos.y})`);
       g.setAttribute("class", "rg-node");
