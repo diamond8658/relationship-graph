@@ -734,7 +734,7 @@ export const Graph: React.FC<GraphProps> = ({
       });
       nodesLayer.appendChild(g);
     });
-  }, [people, selectedId, filterText, onSelectPerson, resolveCollisions]);
+  }, [people, selectedId, filterText, simplified, onSelectPerson, resolveCollisions]);
 
   // Blend two hex colors by averaging their RGB components
   function blendColors(a: string, b: string): string {
