@@ -4,7 +4,7 @@ import { api } from "../api";
 
 import { personColors } from "../colors";
 const SENTIMENT_COLORS: Record<string, string> = {
-  hates: '#7C0A02',
+  hates: '#E3000F',
   dislikes: '#ff6e00',
   neutral: '#888780',
   likes: '#03c04a',
@@ -16,6 +16,7 @@ interface GraphProps {
   people: Person[];
   selectedId: string | null;
   filterText: string;
+  simplified?: boolean;
   onSelectPerson: (id: string) => void;
   onDragEnd: (id: string, x: number, y: number) => void;
   onUntangleRef?: React.MutableRefObject<(() => void) | null>;
@@ -24,7 +25,7 @@ interface GraphProps {
 }
 
 const SENTIMENT_COLORS_MODAL: Record<string, string> = {
-  hates: '#7C0A02', dislikes: '#ff6e00', neutral: '#888780',
+  hates: '#E3000F', dislikes: '#ff6e00', neutral: '#888780',
   likes: '#03c04a', loves: '#4b0082',
 };
 
@@ -65,7 +66,7 @@ const ModalRelationships: React.FC<{ modal: any; people: any[] }> = ({ modal, pe
 };
 
 export const Graph: React.FC<GraphProps> = ({
-  people, selectedId, filterText, onSelectPerson, onDragEnd, onUntangleRef, onLayoutSaved, onUpdated,
+  people, selectedId, filterText, simplified = false, onSelectPerson, onDragEnd, onUntangleRef, onLayoutSaved, onUpdated,
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const draggingRef = useRef<{ id: string; offX: number; offY: number } | null>(null);
@@ -596,11 +597,18 @@ export const Graph: React.FC<GraphProps> = ({
           (other.primary_tag && other.primary_tag.toLowerCase().includes(ft2)) ||
           other.tags.some((t: any) => t.label.toLowerCase().includes(ft2));
         const dim = filterText && !personMatched && !otherMatched;
-
         const reverse = other.outgoing.find(r => r.to_id === person.id);
-        const isBidirectional = !!reverse;
-        drawEdgeDir(edgesLayer, aPos, bPos, rel.label, sentimentColor(rel.sentiment), dim ? 0.08 : 1, ns, 1, person.id, rel.to_id);
-        if (reverse) drawEdgeDir(edgesLayer, bPos, aPos, reverse.label, sentimentColor(reverse.sentiment), dim ? 0.08 : 1, ns, 1, rel.to_id, person.id);
+
+        if (simplified) {
+          // Simplified mode: single line, blended color, no label
+          const colA = sentimentColor(rel.sentiment);
+          const colB = reverse ? sentimentColor(reverse.sentiment) : colA;
+          const blended = blendColors(colA, colB);
+          drawEdgeSimple(edgesLayer, aPos, bPos, blended, dim ? 0.08 : 1, ns);
+        } else {
+          drawEdgeDir(edgesLayer, aPos, bPos, rel.label, sentimentColor(rel.sentiment), dim ? 0.08 : 1, ns, 1, person.id, rel.to_id);
+          if (reverse) drawEdgeDir(edgesLayer, bPos, aPos, reverse.label, sentimentColor(reverse.sentiment), dim ? 0.08 : 1, ns, 1, rel.to_id, person.id);
+        }
       });
     });
 
@@ -727,6 +735,41 @@ export const Graph: React.FC<GraphProps> = ({
       nodesLayer.appendChild(g);
     });
   }, [people, selectedId, filterText, onSelectPerson, resolveCollisions]);
+
+  // Blend two hex colors by averaging their RGB components
+  function blendColors(a: string, b: string): string {
+    const parse = (h: string) => [
+      parseInt(h.slice(1,3),16),
+      parseInt(h.slice(3,5),16),
+      parseInt(h.slice(5,7),16),
+    ];
+    const [ar,ag,ab] = parse(a);
+    const [br,bg,bb] = parse(b);
+    const r = Math.round((ar+br)/2).toString(16).padStart(2,'0');
+    const g = Math.round((ag+bg)/2).toString(16).padStart(2,'0');
+    const bh = Math.round((ab+bb)/2).toString(16).padStart(2,'0');
+    return `#${r}${g}${bh}`;
+  }
+
+  // Simplified edge — single straight line, no arrowhead, no label
+  function drawEdgeSimple(
+    layer: SVGGElement, a: { x: number; y: number }, b: { x: number; y: number },
+    col: string, opacity: number, ns: string
+  ) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 1) return;
+    const ux = dx / dist, uy = dy / dist;
+    const NR = 26;
+    const x1 = a.x + ux * NR, y1 = a.y + uy * NR;
+    const x2 = b.x - ux * NR, y2 = b.y - uy * NR;
+    const line = document.createElementNS(ns, "line");
+    line.setAttribute("x1", String(x1)); line.setAttribute("y1", String(y1));
+    line.setAttribute("x2", String(x2)); line.setAttribute("y2", String(y2));
+    line.setAttribute("stroke", col); line.setAttribute("stroke-width", "2");
+    line.setAttribute("opacity", String(opacity));
+    layer.appendChild(line);
+  }
 
   function drawEdgeDir(
     layer: SVGGElement, a: { x: number; y: number }, b: { x: number; y: number },
@@ -906,7 +949,7 @@ export const Graph: React.FC<GraphProps> = ({
       {connectModal && (() => {
         const fromPerson = people.find(p => p.id === connectModal.fromId);
         const toPerson = people.find(p => p.id === connectModal.toId);
-        const SENTIMENT_COLORS_C: Record<string, string> = { hates: '#7C0A02', dislikes: '#ff6e00', neutral: '#888780', likes: '#03c04a', loves: '#4b0082' };
+        const SENTIMENT_COLORS_C: Record<string, string> = { hates: '#E3000F', dislikes: '#ff6e00', neutral: '#888780', likes: '#03c04a', loves: '#4b0082' };
         const SENTIMENTS_C = ['hates','dislikes','neutral','likes','loves'];
         return (
           <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 40 }}

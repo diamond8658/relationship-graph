@@ -43,6 +43,7 @@ export default function App() {
   const firstLoadDone = React.useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [simplified, setSimplified] = useState(false);
 
   // ── Data loading ───────────────────────────────────────────────────────────
 
@@ -167,6 +168,8 @@ export default function App() {
         onExport={handleExport}
         people={people}
         onSelectPerson={setSelectedId}
+        simplified={simplified}
+        onToggleSimplified={() => setSimplified(s => !s)}
       />
 
       {/* Backend connection error banner */}
@@ -183,6 +186,7 @@ export default function App() {
             people={people}
             selectedId={selectedId}
             filterText={filterText}
+            simplified={simplified}
             onSelectPerson={setSelectedId}
             onDragEnd={handleDragEnd}
             onUntangleRef={untangleRef}
