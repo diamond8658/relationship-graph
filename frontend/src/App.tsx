@@ -144,6 +144,50 @@ export default function App() {
     }
   };
 
+  // Load a graph from a JSON export file.
+  // Auto-exports the current graph first as a backup, then overwrites with the imported data.
+  const handleImport = async () => {
+    // Step 1: silently export current graph as backup
+    try {
+      const res = await fetch("http://127.0.0.1:8000/export");
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `relationship-graph-backup-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {}
+
+    // Step 2: open file picker
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = async (e: any) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const payload = JSON.parse(text);
+        const res = await fetch("http://127.0.0.1:8000/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }));
+          throw new Error(err.detail || "Import failed");
+        }
+        await loadPeople();
+        setSelectedId(null);
+      } catch (e: any) {
+        alert("Import failed: " + e.message);
+      }
+    };
+    input.click();
+  };
+
   // ── Derived state ──────────────────────────────────────────────────────────
   const selectedPerson = people.find(p => p.id === selectedId) || null;
 
@@ -170,6 +214,7 @@ export default function App() {
         onSelectPerson={setSelectedId}
         simplified={simplified}
         onToggleSimplified={() => setSimplified(s => !s)}
+        onImport={handleImport}
       />
 
       {/* Backend connection error banner */}

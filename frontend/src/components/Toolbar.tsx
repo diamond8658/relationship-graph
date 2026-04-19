@@ -13,10 +13,11 @@ interface ToolbarProps {
   onSelectPerson: (id: string) => void;
   simplified: boolean;
   onToggleSimplified: () => void;
+  onImport: () => void;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
-  search, onSearch, onAddPerson, onResetLayout, onRefresh, onUntangle, onExport, people, onSelectPerson, simplified, onToggleSimplified,
+  search, onSearch, onAddPerson, onResetLayout, onRefresh, onUntangle, onExport, people, onSelectPerson, simplified, onToggleSimplified, onImport,
 }) => {
   const [showDropdown, setShowDropdown] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -153,6 +154,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         {simplified ? "⊞ Detail" : "⊟ Simple"}
       </button>
       <button onClick={onExport} style={btnStyle("#1D9E75")} title="Export data as JSON">↓ Export</button>
+      <button onClick={onImport} style={btnStyle("#BA7517")} title="Load a graph from a JSON file (auto-backs up current graph first)">↑ Load</button>
     </div>
   );
 };

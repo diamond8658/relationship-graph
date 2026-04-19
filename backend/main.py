@@ -354,6 +354,103 @@ def export_data(db: Session = Depends(get_db)):
         ],
     )
 
+# ── Import ───────────────────────────────────────────────────────────────────
+
+@app.post("/import")
+def import_data(payload: schemas.ExportData, db: Session = Depends(get_db)):
+    """
+    Replace the entire graph with data from an export file.
+    Wipes all existing data first, then restores people, tags, timeline,
+    interests, and relationships from the import payload.
+    ID remapping is handled so relationships resolve correctly even if the
+    imported IDs collide with existing ones.
+    """
+    # ── Wipe existing data ────────────────────────────────────────────────────
+    # Delete in dependency order to avoid FK constraint violations
+    db.query(models.PersonInterest).delete()
+    db.query(models.TimelineEntry).delete()
+    db.query(models.PersonTag).delete()
+    db.query(models.Relationship).delete()
+    db.query(models.Person).delete()
+    db.commit()
+
+    # ── Restore people ────────────────────────────────────────────────────────
+    # Build an ID map in case imported IDs need to be remapped
+    id_map: dict[str, str] = {}
+
+    for p in payload.people:
+        new_id = str(uuid.uuid4())
+        id_map[p.id] = new_id
+        person = models.Person(
+            id=new_id,
+            name=p.name,
+            primary_tag=p.primary_tag,
+            occupation=p.occupation,
+            company=p.company,
+            location=p.location,
+            phone=p.phone,
+            email=p.email,
+            linkedin=p.linkedin,
+            description=p.description,
+            photo=p.photo,
+            birthday=p.birthday,
+            twitter=p.twitter,
+            instagram=p.instagram,
+            github=p.github,
+            website=p.website,
+            skills=p.skills,
+            x=p.x,
+            y=p.y,
+        )
+        db.add(person)
+
+        for tag in p.tags:
+            db.add(models.PersonTag(
+                id=str(uuid.uuid4()),
+                person_id=new_id,
+                label=tag.label,
+            ))
+
+        for entry in p.timeline:
+            db.add(models.TimelineEntry(
+                id=str(uuid.uuid4()),
+                person_id=new_id,
+                date=entry.date,
+                note=entry.note,
+            ))
+
+        for interest in p.interests:
+            db.add(models.PersonInterest(
+                id=str(uuid.uuid4()),
+                person_id=new_id,
+                type=interest.type,
+                label=interest.label,
+                confirmed=interest.confirmed,
+            ))
+
+    db.commit()
+
+    # ── Restore relationships (after all people exist) ────────────────────────
+    for p in payload.people:
+        from_id = id_map.get(p.id)
+        if not from_id:
+            continue
+        for rel in p.relationships:
+            to_id = id_map.get(rel.to_id)
+            if not to_id:
+                continue  # Skip if target person wasn't in the import
+            db.add(models.Relationship(
+                id=str(uuid.uuid4()),
+                from_id=from_id,
+                to_id=to_id,
+                label=rel.label,
+                sentiment=rel.sentiment,
+            ))
+
+    db.commit()
+    return {"ok": True, "people": len(payload.people)}
+
+
 # ── Layout ────────────────────────────────────────────────────────────────────
 
 @app.put("/layout")
