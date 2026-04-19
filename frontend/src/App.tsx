@@ -188,6 +188,39 @@ export default function App() {
     input.click();
   };
 
+  // Wipe the entire graph — auto-exports first as backup then calls /import with empty data.
+  const handleNewGraph = async () => {
+    if (!window.confirm("This will clear your entire graph. A backup will be downloaded first. Continue?")) return;
+
+    // Auto-export backup
+    try {
+      const res = await fetch("http://127.0.0.1:8000/export");
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `relationship-graph-backup-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {}
+
+    // POST empty graph to /import
+    try {
+      await fetch("http://127.0.0.1:8000/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: 1, exported_at: new Date().toISOString(), people: [] }),
+      });
+      await loadPeople();
+      setSelectedId(null);
+      sessionStorage.removeItem("me-setup-dismissed");
+      setShowMeSetup(true);
+    } catch (e: any) {
+      alert("Failed to reset graph: " + e.message);
+    }
+  };
+
   // ── Derived state ──────────────────────────────────────────────────────────
   const selectedPerson = people.find(p => p.id === selectedId) || null;
 
@@ -215,6 +248,7 @@ export default function App() {
         simplified={simplified}
         onToggleSimplified={() => setSimplified(s => !s)}
         onImport={handleImport}
+        onNewGraph={handleNewGraph}
       />
 
       {/* Backend connection error banner */}

@@ -14,12 +14,15 @@ interface ToolbarProps {
   simplified: boolean;
   onToggleSimplified: () => void;
   onImport: () => void;
+  onNewGraph: () => void;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
-  search, onSearch, onAddPerson, onResetLayout, onRefresh, onUntangle, onExport, people, onSelectPerson, simplified, onToggleSimplified, onImport,
+  search, onSearch, onAddPerson, onResetLayout, onRefresh, onUntangle, onExport, people, onSelectPerson, simplified, onToggleSimplified, onImport, onNewGraph,
 }) => {
   const [showDropdown, setShowDropdown] = useState(false);
+  const [showFileMenu, setShowFileMenu] = useState(false);
+  const fileMenuRef = useRef<HTMLDivElement>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -46,6 +49,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
     const handler = (e: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
         setShowDropdown(false);
+      }
+      if (fileMenuRef.current && !fileMenuRef.current.contains(e.target as Node)) {
+        setShowFileMenu(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -153,8 +159,45 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       <button onClick={onToggleSimplified} style={btnStyle(simplified ? "#D85A30" : "#888")} title={simplified ? "Switch to detailed view" : "Switch to simplified view"}>
         {simplified ? "⊞ Detail" : "⊟ Simple"}
       </button>
-      <button onClick={onExport} style={btnStyle("#1D9E75")} title="Export data as JSON">↓ Export</button>
-      <button onClick={onImport} style={btnStyle("#BA7517")} title="Load a graph from a JSON file (auto-backs up current graph first)">↑ Load</button>
+      {/* File dropdown — New, Load, Export */}
+      <div ref={fileMenuRef} style={{ position: "relative" }}>
+        <button
+          onClick={() => setShowFileMenu(o => !o)}
+          style={btnStyle("#1D9E75")}
+          title="File options"
+        >
+          File ▾
+        </button>
+        {showFileMenu && (
+          <div style={{
+            position: "absolute", top: "100%", right: 0, zIndex: 200,
+            background: "#fff", border: "1px solid #ddd", borderRadius: 8,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.12)", marginTop: 4,
+            minWidth: 160, overflow: "hidden",
+          }}>
+            {[
+              { label: "✦ New Graph", color: "#E24B4A", action: () => { onNewGraph(); setShowFileMenu(false); } },
+              { label: "↑ Load Graph", color: "#BA7517", action: () => { onImport(); setShowFileMenu(false); } },
+              { label: "↓ Export Graph", color: "#1D9E75", action: () => { onExport(); setShowFileMenu(false); } },
+            ].map((item, i, arr) => (
+              <div
+                key={item.label}
+                onMouseDown={item.action}
+                style={{
+                  padding: "9px 14px", fontSize: 13, cursor: "pointer",
+                  color: item.color, fontWeight: 500,
+                  borderBottom: i < arr.length - 1 ? "1px solid #f0f0f0" : "none",
+                  display: "flex", alignItems: "center", gap: 8,
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = "#f7f7f7")}
+                onMouseLeave={e => (e.currentTarget.style.background = "#fff")}
+              >
+                {item.label}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
