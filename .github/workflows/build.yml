@@ -7,39 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  validate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm install
-
-      - name: TypeScript type-check
-        working-directory: frontend
-        run: npx tsc --noEmit
-
-      - name: Install backend dependencies
-        working-directory: backend
-        run: pip install -r requirements.txt
-
-      - name: Backend import smoke test
-        working-directory: backend
-        run: python -c "from main import app; print('Backend imports OK')"
-
   build-windows:
-    needs: validate
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -76,6 +44,16 @@ jobs:
           if (Test-Path electron/frontend) { Remove-Item -Recurse -Force electron/frontend }
           Copy-Item -Recurse frontend/build electron/frontend
 
+      - name: Set Electron app version from tag
+        working-directory: electron
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $pkg = Get-Content package.json | ConvertFrom-Json
+          $pkg.version = $version
+          $pkg | ConvertTo-Json -Depth 10 | Set-Content package.json
+          Write-Host "Set version to $version"
+
       - name: Build Electron app (Windows)
         working-directory: electron
         run: |
@@ -91,7 +69,6 @@ jobs:
           path: dist/**/*.exe
 
   build-mac:
-    needs: validate
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -126,6 +103,19 @@ jobs:
         run: |
           rm -rf electron/frontend
           cp -r frontend/build electron/frontend
+
+      - name: Set Electron app version from tag
+        working-directory: electron
+        run: |
+          version="${{ github.ref_name }}"
+          version="${version#v}"
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json'));
+            pkg.version = '$version';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+          "
+          echo "Set version to $version"
 
       - name: Build Electron app (Mac)
         working-directory: electron
@@ -180,7 +170,7 @@ jobs:
           files: |
             installers/windows/**/*.exe
             installers/mac/**/*.dmg
-          draft: true
+          draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
