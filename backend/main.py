@@ -108,9 +108,7 @@ def groq_call(prompt: str, max_tokens: int = 512) -> str:
     text = data["choices"][0]["message"]["content"].strip()
     # Strip markdown fences if model wraps output in ```json ... ```
     if text.startswith("```"):
-        text = "
-".join(text.split("
-")[1:])
+        text = "\n".join(text.split("\n")[1:])
         if text.endswith("```"):
             text = text[:-3].strip()
     return text
