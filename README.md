@@ -33,8 +33,7 @@ relationship-graph/
 │   │   │   ├── Toolbar.tsx         # Search, add, refresh, sort, export buttons
 │   │   │   ├── AddPersonModal.tsx  # Add person dialog
 │   │   │   └── MeSetupModal.tsx    # First-run "Me" node setup
-│   │   ├── colors.ts       # Shared color palette and group color assignment (imported by Graph and ProfilePanel)
-│   ├── types.ts        # Shared TypeScript interfaces
+│   │   ├── types.ts        # Shared TypeScript interfaces
 │   │   ├── api.ts          # All HTTP calls to the FastAPI backend
 │   │   ├── App.tsx         # Root component — owns global state and wiring
 │   │   └── index.tsx
@@ -96,8 +95,7 @@ python migrate.py
 - Drag nodes to arrange — positions auto-saved to DB
 - **Shift+drag** from one node to another to create a relationship via a quick modal
 - Bidirectional labeled arrows with parallel offset so both directions stay readable
-- Sentiment-colored arrows: hates (red) → dislikes (orange) → neutral (gray) → likes (green) → loves (indigo)
-- **⊟ Simple / ⊞ Detail** toggle — simplified view collapses bidirectional arrows into a single blended-color line with no labels
+- Sentiment-colored arrows: hates (barn red) → dislikes (orange) → neutral (gray) → likes (green) → loves (indigo)
 - Collision resolution prevents nodes from stacking
 - **⇌ Sort** — hub-and-spoke layout algorithm:
   - Me node always at center
@@ -107,9 +105,7 @@ python migrate.py
   - Untagged nodes form their own cluster
 
 ### People & Profiles
-- Full contact card: name, occupation, company, location, phone, email, LinkedIn, website, birthday
-- Social handles: Twitter/X, Instagram, GitHub
-- Skills field (comma-separated)
+- Full contact card: name, occupation, company, location, phone, email, LinkedIn
 - Photo upload or URL paste
 - Freeform description for traits and notes (no date required)
 - Multiple tags with a **primary tag** displayed as a colored badge — click to edit, drives node color and sort grouping
@@ -134,7 +130,6 @@ python migrate.py
 
 ### Search
 - Searches name, primary tag, occupation, and all tags simultaneously
-- **Live highlighting** — non-matching nodes fade to grayscale as you type; matching nodes glow
 - Dropdown with arrow key navigation and Enter to select
 - Single match auto-selects on Enter
 
@@ -160,7 +155,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-Both installers will be built by GitHub Actions and attached to a GitHub Release automatically. The installer version is set from the git tag automatically — no manual version bump needed.
+Both installers will be built by GitHub Actions and attached to a GitHub Release automatically.
 
 ## API Endpoints
 
@@ -193,6 +188,6 @@ Both installers will be built by GitHub Actions and attached to a GitHub Release
 - **Relationship strength** — numeric weight that thickens strong ties and fades weak ones
 - **Reminders** — track "last contacted" date and surface people you haven't reached out to recently
 - **Graph statistics** — degree centrality, mutual connections, cluster analysis
-- **Mobile app** — React Native + Expo client backed by the same FastAPI backend. The existing REST API is already mobile-ready (all JSON, no desktop-specific dependencies). Planned approach: host the FastAPI backend on a lightweight cloud provider (Railway or Fly.io) and build a React Native frontend using `react-native-svg` for the graph canvas. The graph canvas and profile panel would be rebuilt natively; the API layer (`api.ts`) ports verbatim.
+- **Mobile app** — React Native version backed by the same FastAPI backend
 - **Multi-graph support** — maintain separate graphs (personal, professional) and switch between them
 - **iCloud / Google Drive sync** — optional cloud backup of the SQLite database

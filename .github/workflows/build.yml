@@ -162,7 +162,7 @@ jobs:
 
             ### Installation
             **Windows:** Run the installer and follow the prompts. A desktop shortcut will be created automatically.
-            **Mac:** Open the `.dmg`, drag the app to your Applications folder.
+            **Mac:** Open the `.dmg`, drag the app to your Applications folder. If you see a "damaged" error, run `xattr -cr "/Applications/Relationship Graph.app"` in Terminal.
 
             ### Notes
             - Your data is stored locally — no account needed
