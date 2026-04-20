@@ -114,7 +114,15 @@ def groq_call(prompt: str, max_tokens: int = 512) -> str:
     return text
 
 
-# ── AI Status ────────────────────────────────────────────────────────────────
+# ── AI Status & Paths ────────────────────────────────────────────────────────
+
+@app.get("/backup-path")
+def get_backup_path():
+    """Returns the directory where automatic backups are saved."""
+    db_path = os.environ.get("DB_PATH", "./relationship_graph.db")
+    backup_dir = os.path.dirname(os.path.abspath(db_path))
+    return {"path": backup_dir}
+
 
 @app.get("/ai/status", response_model=schemas.AIStatus)
 def ai_status():

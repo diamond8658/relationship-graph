@@ -44,6 +44,9 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [simplified, setSimplified] = useState(false);
+  // Hash of graph state at last export — used to detect unsaved changes
+  const lastExportHashRef = React.useRef<string | null>(null);
+  const [backupPath, setBackupPath] = React.useState<string>("");
 
   // ── Data loading ───────────────────────────────────────────────────────────
 
@@ -63,6 +66,19 @@ export default function App() {
         setPeople(data);
       }
       setError("");
+      // Initialise export hash and backup path on first load
+      if (!lastExportHashRef.current) {
+        try {
+          const exportRes = await fetch("http://127.0.0.1:8000/export");
+          const exportData = await exportRes.json();
+          lastExportHashRef.current = graphHash(exportData.people || []);
+        } catch {}
+        try {
+          const pathRes = await fetch("http://127.0.0.1:8000/backup-path");
+          const pathData = await pathRes.json();
+          setBackupPath(pathData.path || "");
+        } catch {}
+      }
 
       // Only check for Me node on the very first load, not on every refresh.
       if (!firstLoadDone.current) {
@@ -127,6 +143,52 @@ export default function App() {
     await loadPeople();
   };
 
+  // Compute a lightweight hash of the current graph for change detection.
+  // Uses people count + sorted name+tag fingerprint — fast and good enough.
+  const graphHash = (data: any[]): string => {
+    const sig = data
+      .map(p => `${p.name}|${p.primary_tag}|${p.outgoing?.length ?? 0}`)
+      .sort()
+      .join(",");
+    return `${data.length}:${sig}`;
+  };
+
+  // Returns true if the user confirms they want to proceed despite unsaved changes.
+  // If no changes since last export, returns true immediately without prompting.
+  const confirmIfUnsaved = async (): Promise<boolean> => {
+    try {
+      const res = await fetch("http://127.0.0.1:8000/export");
+      const data = await res.json();
+      const currentHash = graphHash(data.people || []);
+
+      // No changes since last export — proceed silently
+      if (lastExportHashRef.current === currentHash) return true;
+
+      // Changes detected — ask user what to do
+      const pathNote = backupPath ? `\n\nAuto-backups are saved to:\n${backupPath}` : "";
+      const choice = window.confirm(
+        "You have changes since your last export.\n\n" +
+        "Click OK to export a backup before continuing, or Cancel to continue without exporting." +
+        pathNote
+      );
+
+      if (choice) {
+        // Export backup then proceed
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `relationship-graph-backup-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        lastExportHashRef.current = currentHash;
+      }
+      return true; // proceed either way
+    } catch {
+      return true; // if we can't check, just proceed
+    }
+  };
+
   // Trigger a JSON download of the full graph data from the export endpoint.
   const handleExport = async () => {
     try {
@@ -139,28 +201,20 @@ export default function App() {
       a.download = `relationship-graph-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
+      // Track the exported state so we can detect changes later
+      lastExportHashRef.current = graphHash(data.people || []);
     } catch (e: any) {
       alert("Export failed: " + e.message);
     }
   };
 
   // Load a graph from a JSON export file.
-  // Auto-exports the current graph first as a backup, then overwrites with the imported data.
   const handleImport = async () => {
-    // Step 1: silently export current graph as backup
-    try {
-      const res = await fetch("http://127.0.0.1:8000/export");
-      const data = await res.json();
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `relationship-graph-backup-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {}
+    // Check for unsaved changes first — prompts export if needed
+    const proceed = await confirmIfUnsaved();
+    if (!proceed) return;
 
-    // Step 2: open file picker
+    // Open file picker
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".json";
@@ -190,7 +244,12 @@ export default function App() {
 
   // Wipe the entire graph — backend auto-saves a backup first, then clears.
   const handleNewGraph = async () => {
-    if (!window.confirm("This will clear your entire graph. A backup will be saved automatically. Continue?")) return;
+    // Check for unsaved changes first — prompts export if needed
+    const proceed = await confirmIfUnsaved();
+    if (!proceed) return;
+
+    const pathMsg = backupPath ? `\n\nAuto-backups are saved to:\n${backupPath}` : "";
+    if (!window.confirm("This will clear your entire graph. A backup will be saved automatically before wiping." + pathMsg + "\n\nContinue?")) return;
 
     try {
       // POST empty graph to /import — backend saves a timestamped backup
