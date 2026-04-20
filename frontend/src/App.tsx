@@ -188,25 +188,13 @@ export default function App() {
     input.click();
   };
 
-  // Wipe the entire graph — auto-exports first as backup then calls /import with empty data.
+  // Wipe the entire graph — backend auto-saves a backup first, then clears.
   const handleNewGraph = async () => {
-    if (!window.confirm("This will clear your entire graph. A backup will be downloaded first. Continue?")) return;
+    if (!window.confirm("This will clear your entire graph. A backup will be saved automatically. Continue?")) return;
 
-    // Auto-export backup
     try {
-      const res = await fetch("http://127.0.0.1:8000/export");
-      const data = await res.json();
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `relationship-graph-backup-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {}
-
-    // POST empty graph to /import
-    try {
+      // POST empty graph to /import — backend saves a timestamped backup
+      // to the user data directory before wiping, no download dialog needed.
       await fetch("http://127.0.0.1:8000/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

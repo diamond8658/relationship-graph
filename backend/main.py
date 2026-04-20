@@ -36,6 +36,28 @@ def run_migrations():
         ("website",   "TEXT DEFAULT ''"),
         ("skills",    "TEXT DEFAULT ''"),
     ]
+    # Ensure new tables exist
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS relationship_suggestions (
+            id TEXT PRIMARY KEY,
+            from_id TEXT REFERENCES people(id) ON DELETE CASCADE,
+            to_id TEXT REFERENCES people(id) ON DELETE CASCADE,
+            to_name TEXT DEFAULT '',
+            label TEXT DEFAULT '',
+            sentiment TEXT DEFAULT 'neutral',
+            source TEXT DEFAULT '',
+            confirmed INTEGER DEFAULT 0
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS profile_suggestions (
+            id TEXT PRIMARY KEY,
+            person_id TEXT REFERENCES people(id) ON DELETE CASCADE,
+            field TEXT NOT NULL,
+            value TEXT NOT NULL,
+            confirmed INTEGER DEFAULT 0
+        )
+    """)
     for col, coltype in new_columns:
         if col not in existing:
             cur.execute(f"ALTER TABLE people ADD COLUMN {col} {coltype}")
@@ -54,7 +76,55 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+
+def groq_call(prompt: str, max_tokens: int = 512) -> str:
+    """
+    Send a prompt to Groq and return the response text.
+    Raises RuntimeError if AI is not configured or the call fails.
+    """
+    if not GROQ_API_KEY:
+        raise RuntimeError("AI not configured. Set GROQ_API_KEY environment variable.")
+    payload = json.dumps({
+        "model": GROQ_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": 0.1,   # low temp for reliable structured JSON output
+    }).encode()
+    req = urllib.request.Request(
+        GROQ_URL,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as res:
+        data = json.loads(res.read())
+    text = data["choices"][0]["message"]["content"].strip()
+    # Strip markdown fences if model wraps output in ```json ... ```
+    if text.startswith("```"):
+        text = "
+".join(text.split("
+")[1:])
+        if text.endswith("```"):
+            text = text[:-3].strip()
+    return text
+
+
+# ── AI Status ────────────────────────────────────────────────────────────────
+
+@app.get("/ai/status", response_model=schemas.AIStatus)
+def ai_status():
+    """Returns whether AI features are available and which model is in use."""
+    return schemas.AIStatus(
+        enabled=bool(GROQ_API_KEY),
+        model=GROQ_MODEL if GROQ_API_KEY else "",
+    )
 
 
 # ── People ────────────────────────────────────────────────────────────────────
@@ -161,82 +231,284 @@ def delete_timeline_entry(entry_id: str, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-# ── AI Interest Extraction ────────────────────────────────────────────────────
+# ── AI Analysis ──────────────────────────────────────────────────────────────
 
 @app.post("/timeline/{entry_id}/analyze")
 def analyze_timeline_entry(entry_id: str, db: Session = Depends(get_db)):
+    """
+    Expanded timeline analysis — extracts:
+    - likes/dislikes (stored as PersonInterest)
+    - people mentioned (stored as RelationshipSuggestion if they exist in the graph)
+    - locations and key sentiments (returned as metadata)
+    """
     entry = db.query(models.TimelineEntry).filter(models.TimelineEntry.id == entry_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Entry not found")
 
-    if not ANTHROPIC_API_KEY:
-        return {"suggestions": [], "count": 0, "message": "AI suggestions not enabled. Set ANTHROPIC_API_KEY to enable this feature."}
+    if not GROQ_API_KEY:
+        return {"suggestions": [], "count": 0, "ai_enabled": False,
+                "message": "AI not configured. Set GROQ_API_KEY to enable."}
 
-    prompt = f"""Extract any likes and dislikes mentioned in this note about a person.
-Return ONLY a JSON object with two arrays: "likes" and "dislikes".
-Each item should be a short label (2-4 words max).
-If none are found, return empty arrays.
+    # Build list of known people for relationship matching
+    all_people = db.query(models.Person).all()
+    person_names = {p.name.lower(): p for p in all_people}
+    subject_person = db.query(models.Person).filter(
+        models.Person.id == entry.person_id
+    ).first()
+
+    prompt = f"""Analyze this journal note about {subject_person.name if subject_person else "a person"}.
+
+Return ONLY a JSON object with these keys:
+- "likes": list of short labels (2-4 words) for things they like
+- "dislikes": list of short labels (2-4 words) for things they dislike  
+- "people_mentioned": list of objects with "name" and "relationship" (e.g. "Friend", "Colleague", "Partner") for any people mentioned
+- "locations": list of locations mentioned
+- "sentiment_notes": list of short observations about their emotional state or attitude
+
+Return empty arrays if nothing is found. Labels should be concise.
 
 Note: "{entry.note}"
 
 Example output:
-{{"likes": ["sushi", "hiking", "sci-fi movies"], "dislikes": ["loud music", "mornings"]}}"""
-
-    payload = json.dumps({
-        "model": "claude-sonnet-4-20250514",
-        "max_tokens": 256,
-        "messages": [{"role": "user", "content": prompt}]
-    }).encode()
-
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-        },
-        method="POST",
-    )
+{{"likes": ["sushi", "hiking"], "dislikes": ["loud music"], "people_mentioned": [{{"name": "Alice", "relationship": "Friend"}}], "locations": ["NYC"], "sentiment_notes": ["seems happy about new job"]}}"""
 
     try:
-        with urllib.request.urlopen(req) as res:
-            data = json.loads(res.read())
-        text = data["content"][0]["text"].strip()
-        # Strip markdown fences if present
-        if text.startswith("```"):
-            text = "\n".join(text.split("\n")[1:-1])
+        text = groq_call(prompt, max_tokens=512)
         extracted = json.loads(text)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI extraction failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"AI analysis failed: {str(e)}")
 
-    created = []
+    created_interests = []
+    created_rel_suggestions = []
+
+    # Store likes/dislikes
     for label in extracted.get("likes", []):
-        interest = models.PersonInterest(
-            id=str(uuid.uuid4()),
-            person_id=entry.person_id,
-            type="likes",
-            label=label.strip(),
-            confirmed=False,
+        db.add(models.PersonInterest(
+            id=str(uuid.uuid4()), person_id=entry.person_id,
+            type="likes", label=label.strip(), confirmed=False,
             source_entry_id=entry_id,
-        )
-        db.add(interest)
-        created.append({"type": "likes", "label": label.strip()})
+        ))
+        created_interests.append({"type": "likes", "label": label.strip()})
 
     for label in extracted.get("dislikes", []):
-        interest = models.PersonInterest(
-            id=str(uuid.uuid4()),
-            person_id=entry.person_id,
-            type="dislikes",
-            label=label.strip(),
-            confirmed=False,
+        db.add(models.PersonInterest(
+            id=str(uuid.uuid4()), person_id=entry.person_id,
+            type="dislikes", label=label.strip(), confirmed=False,
             source_entry_id=entry_id,
-        )
-        db.add(interest)
-        created.append({"type": "dislikes", "label": label.strip()})
+        ))
+        created_interests.append({"type": "dislikes", "label": label.strip()})
+
+    # Store relationship suggestions for people found in the graph
+    for mention in extracted.get("people_mentioned", []):
+        name = mention.get("name", "").strip()
+        rel_label = mention.get("relationship", "Friend").strip()
+        matched = person_names.get(name.lower())
+        if matched and matched.id != entry.person_id:
+            # Check we haven't already suggested this pair
+            existing = db.query(models.RelationshipSuggestion).filter(
+                models.RelationshipSuggestion.from_id == entry.person_id,
+                models.RelationshipSuggestion.to_id == matched.id,
+            ).first()
+            if not existing:
+                db.add(models.RelationshipSuggestion(
+                    id=str(uuid.uuid4()),
+                    from_id=entry.person_id,
+                    to_id=matched.id,
+                    to_name=matched.name,
+                    label=rel_label,
+                    sentiment="neutral",
+                    source=entry.note[:120],
+                    confirmed=False,
+                ))
+                created_rel_suggestions.append({"name": name, "label": rel_label})
 
     db.commit()
-    return {"suggestions": created, "count": len(created)}
+    return {
+        "suggestions": created_interests,
+        "count": len(created_interests),
+        "relationship_suggestions": created_rel_suggestions,
+        "locations": extracted.get("locations", []),
+        "sentiment_notes": extracted.get("sentiment_notes", []),
+        "ai_enabled": True,
+    }
+
+
+# ── Relationship Suggestions ──────────────────────────────────────────────────
+
+@app.get("/people/{person_id}/relationship-suggestions",
+         response_model=List[schemas.RelationshipSuggestionOut])
+def get_relationship_suggestions(person_id: str, db: Session = Depends(get_db)):
+    return db.query(models.RelationshipSuggestion).filter(
+        models.RelationshipSuggestion.from_id == person_id,
+        models.RelationshipSuggestion.confirmed == False,
+    ).all()
+
+
+@app.put("/relationship-suggestions/{suggestion_id}/confirm")
+def confirm_relationship_suggestion(
+    suggestion_id: str,
+    body: schemas.RelationshipSuggestionConfirm,
+    db: Session = Depends(get_db),
+):
+    sugg = db.query(models.RelationshipSuggestion).filter(
+        models.RelationshipSuggestion.id == suggestion_id
+    ).first()
+    if not sugg:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+
+    if body.confirmed:
+        # Promote to a real relationship
+        existing = db.query(models.Relationship).filter(
+            models.Relationship.from_id == sugg.from_id,
+            models.Relationship.to_id == sugg.to_id,
+        ).first()
+        if not existing:
+            db.add(models.Relationship(
+                id=str(uuid.uuid4()),
+                from_id=sugg.from_id,
+                to_id=sugg.to_id,
+                label=sugg.label,
+                sentiment=sugg.sentiment,
+            ))
+
+    # Remove suggestion either way
+    db.delete(sugg)
+    db.commit()
+    return {"ok": True, "confirmed": body.confirmed}
+
+
+@app.delete("/relationship-suggestions/{suggestion_id}")
+def delete_relationship_suggestion(suggestion_id: str, db: Session = Depends(get_db)):
+    sugg = db.query(models.RelationshipSuggestion).filter(
+        models.RelationshipSuggestion.id == suggestion_id
+    ).first()
+    if not sugg:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+    db.delete(sugg)
+    db.commit()
+    return {"ok": True}
+
+
+# ── Profile Enrichment ────────────────────────────────────────────────────────
+
+@app.post("/people/{person_id}/enrich")
+def enrich_profile(person_id: str, db: Session = Depends(get_db)):
+    """
+    Uses AI to suggest values for empty profile fields based on name,
+    company, and any existing timeline/description context.
+    Stores suggestions as ProfileSuggestion rows for user review.
+    """
+    person = db.query(models.Person).filter(models.Person.id == person_id).first()
+    if not person:
+        raise HTTPException(status_code=404, detail="Person not found")
+
+    if not GROQ_API_KEY:
+        return {"suggestions": [], "count": 0, "ai_enabled": False,
+                "message": "AI not configured. Set GROQ_API_KEY to enable."}
+
+    # Build context from existing data
+    timeline_notes = " | ".join([e.note for e in person.timeline[:5]])
+    context = f"""Name: {person.name}
+Company: {person.company or "unknown"}
+Current occupation: {person.occupation or "unknown"}
+Current location: {person.location or "unknown"}
+Current description: {person.description or "none"}
+Current skills: {person.skills or "none"}
+Timeline notes: {timeline_notes or "none"}"""
+
+    prompt = f"""Based on this information about a person, suggest values for their profile fields.
+Only suggest fields where you have reasonable confidence. Leave fields empty if unsure.
+
+{context}
+
+Return ONLY a JSON object with these optional keys (omit any you're not confident about):
+- "occupation": job title
+- "location": city and country
+- "description": 1-2 sentence personality/professional summary
+- "skills": comma-separated list of skills
+
+Example:
+{{"occupation": "Software Engineer", "location": "San Francisco, CA", "skills": "Python, AWS, data pipelines"}}"""
+
+    try:
+        text = groq_call(prompt, max_tokens=300)
+        suggested = json.loads(text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI enrichment failed: {str(e)}")
+
+    created = []
+    enrichable_fields = ["occupation", "location", "description", "skills"]
+
+    for field in enrichable_fields:
+        value = suggested.get(field, "").strip()
+        if not value:
+            continue
+        # Only suggest if field is currently empty
+        if getattr(person, field, ""):
+            continue
+        # Remove existing pending suggestion for this field if any
+        db.query(models.ProfileSuggestion).filter(
+            models.ProfileSuggestion.person_id == person_id,
+            models.ProfileSuggestion.field == field,
+            models.ProfileSuggestion.confirmed == False,
+        ).delete()
+        db.add(models.ProfileSuggestion(
+            id=str(uuid.uuid4()),
+            person_id=person_id,
+            field=field,
+            value=value,
+            confirmed=False,
+        ))
+        created.append({"field": field, "value": value})
+
+    db.commit()
+    return {"suggestions": created, "count": len(created), "ai_enabled": True}
+
+
+@app.get("/people/{person_id}/profile-suggestions",
+         response_model=List[schemas.ProfileSuggestionOut])
+def get_profile_suggestions(person_id: str, db: Session = Depends(get_db)):
+    return db.query(models.ProfileSuggestion).filter(
+        models.ProfileSuggestion.person_id == person_id,
+        models.ProfileSuggestion.confirmed == False,
+    ).all()
+
+
+@app.put("/profile-suggestions/{suggestion_id}/confirm")
+def confirm_profile_suggestion(
+    suggestion_id: str,
+    body: schemas.ProfileSuggestionConfirm,
+    db: Session = Depends(get_db),
+):
+    sugg = db.query(models.ProfileSuggestion).filter(
+        models.ProfileSuggestion.id == suggestion_id
+    ).first()
+    if not sugg:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+
+    if body.confirmed:
+        # Apply the suggested value to the person's profile
+        person = db.query(models.Person).filter(
+            models.Person.id == sugg.person_id
+        ).first()
+        if person:
+            setattr(person, sugg.field, sugg.value)
+
+    db.delete(sugg)
+    db.commit()
+    return {"ok": True, "confirmed": body.confirmed}
+
+
+@app.delete("/profile-suggestions/{suggestion_id}")
+def delete_profile_suggestion(suggestion_id: str, db: Session = Depends(get_db)):
+    sugg = db.query(models.ProfileSuggestion).filter(
+        models.ProfileSuggestion.id == suggestion_id
+    ).first()
+    if not sugg:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+    db.delete(sugg)
+    db.commit()
+    return {"ok": True}
 
 
 # ── Interests ─────────────────────────────────────────────────────────────────
@@ -353,103 +625,6 @@ def export_data(db: Session = Depends(get_db)):
             for p in people
         ],
     )
-
-# ── Import ───────────────────────────────────────────────────────────────────
-
-@app.post("/import")
-def import_data(payload: schemas.ExportData, db: Session = Depends(get_db)):
-    """
-    Replace the entire graph with data from an export file.
-    Wipes all existing data first, then restores people, tags, timeline,
-    interests, and relationships from the import payload.
-    ID remapping is handled so relationships resolve correctly even if the
-    imported IDs collide with existing ones.
-    """
-    # ── Wipe existing data ────────────────────────────────────────────────────
-    # Delete in dependency order to avoid FK constraint violations
-    db.query(models.PersonInterest).delete()
-    db.query(models.TimelineEntry).delete()
-    db.query(models.PersonTag).delete()
-    db.query(models.Relationship).delete()
-    db.query(models.Person).delete()
-    db.commit()
-
-    # ── Restore people ────────────────────────────────────────────────────────
-    # Build an ID map in case imported IDs need to be remapped
-    id_map: dict[str, str] = {}
-
-    for p in payload.people:
-        new_id = str(uuid.uuid4())
-        id_map[p.id] = new_id
-        person = models.Person(
-            id=new_id,
-            name=p.name,
-            primary_tag=p.primary_tag,
-            occupation=p.occupation,
-            company=p.company,
-            location=p.location,
-            phone=p.phone,
-            email=p.email,
-            linkedin=p.linkedin,
-            description=p.description,
-            photo=p.photo,
-            birthday=p.birthday,
-            twitter=p.twitter,
-            instagram=p.instagram,
-            github=p.github,
-            website=p.website,
-            skills=p.skills,
-            x=p.x,
-            y=p.y,
-        )
-        db.add(person)
-
-        for tag in p.tags:
-            db.add(models.PersonTag(
-                id=str(uuid.uuid4()),
-                person_id=new_id,
-                label=tag.label,
-            ))
-
-        for entry in p.timeline:
-            db.add(models.TimelineEntry(
-                id=str(uuid.uuid4()),
-                person_id=new_id,
-                date=entry.date,
-                note=entry.note,
-            ))
-
-        for interest in p.interests:
-            db.add(models.PersonInterest(
-                id=str(uuid.uuid4()),
-                person_id=new_id,
-                type=interest.type,
-                label=interest.label,
-                confirmed=interest.confirmed,
-            ))
-
-    db.commit()
-
-    # ── Restore relationships (after all people exist) ────────────────────────
-    for p in payload.people:
-        from_id = id_map.get(p.id)
-        if not from_id:
-            continue
-        for rel in p.relationships:
-            to_id = id_map.get(rel.to_id)
-            if not to_id:
-                continue  # Skip if target person wasn't in the import
-            db.add(models.Relationship(
-                id=str(uuid.uuid4()),
-                from_id=from_id,
-                to_id=to_id,
-                label=rel.label,
-                sentiment=rel.sentiment,
-            ))
-
-    db.commit()
-    return {"ok": True, "people": len(payload.people)}
-
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
