@@ -36,6 +36,43 @@ class InterestOut(BaseModel):
 class InterestConfirm(BaseModel):
     confirmed: bool
 
+# ── Relationship Suggestions ──────────────────────────────────────────────────
+
+class RelationshipSuggestionOut(BaseModel):
+    id: str
+    from_id: str
+    to_id: str
+    to_name: str
+    label: str
+    sentiment: str = "neutral"
+    source: str = ""
+    confirmed: bool
+    class Config:
+        from_attributes = True
+
+class RelationshipSuggestionConfirm(BaseModel):
+    confirmed: bool
+
+# ── Profile Suggestions ───────────────────────────────────────────────────────
+
+class ProfileSuggestionOut(BaseModel):
+    id: str
+    person_id: str
+    field: str
+    value: str
+    confirmed: bool
+    class Config:
+        from_attributes = True
+
+class ProfileSuggestionConfirm(BaseModel):
+    confirmed: bool
+
+# ── AI status ─────────────────────────────────────────────────────────────────
+
+class AIStatus(BaseModel):
+    enabled: bool
+    model: str = ""
+
 # ── Relationships ─────────────────────────────────────────────────────────────
 
 class RelationshipOut(BaseModel):
