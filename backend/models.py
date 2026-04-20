@@ -91,6 +91,41 @@ class PersonInterest(Base):
     person = relationship("Person", back_populates="interests")
 
 
+class RelationshipSuggestion(Base):
+    """
+    AI-suggested relationship between two people, pending user review.
+    Confirmed=True promotes it to the real Relationship table.
+    """
+    __tablename__ = "relationship_suggestions"
+
+    id = Column(String, primary_key=True, default=gen_id)
+    from_id = Column(String, ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
+    to_id = Column(String, ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
+    to_name = Column(String, default="")           # Denormalized for display
+    label = Column(String, default="")
+    sentiment = Column(String, default="neutral")
+    source = Column(Text, default="")              # Excerpt that triggered suggestion
+    confirmed = Column(Boolean, default=False)
+
+    from_person = relationship("Person", foreign_keys="RelationshipSuggestion.from_id")
+
+
+class ProfileSuggestion(Base):
+    """
+    AI-suggested value for a single profile field, pending user review.
+    field is the Person column name (e.g. 'occupation', 'skills').
+    """
+    __tablename__ = "profile_suggestions"
+
+    id = Column(String, primary_key=True, default=gen_id)
+    person_id = Column(String, ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
+    field = Column(String, nullable=False)         # Person column name
+    value = Column(Text, nullable=False)           # Suggested value
+    confirmed = Column(Boolean, default=False)
+
+    person = relationship("Person", foreign_keys="ProfileSuggestion.person_id")
+
+
 class Relationship(Base):
     """
     A directed, labeled connection from one person to another.
