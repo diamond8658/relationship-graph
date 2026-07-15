@@ -1,176 +1,106 @@
-name: Build & Release
+name: build
 
 on:
   push:
     tags:
-      - 'v*'
-  workflow_dispatch:
+      - "v*"
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build-backend:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin_ext: ".exe"
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bin_ext: ""
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
-      - name: Install Python dependencies
+      - name: Install backend deps
         working-directory: backend
         run: |
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Bundle backend (Windows)
+      - name: Build backend binary
         working-directory: backend
         run: pyinstaller backend.spec --clean --noconfirm
 
-      - name: Build frontend
-        working-directory: frontend
+      # Tauri's sidecar loader requires the binary name to end in the exact
+      # Rust target triple it was built for. Note: backend.spec names the
+      # PyInstaller output "rg-server", not "server" — this rename step
+      # must match that.
+      - name: Rename binary to match Tauri sidecar naming convention
+        shell: bash
         run: |
-          npm install
-          npm run build
+          mkdir -p src-tauri/binaries
+          mv "backend/dist/rg-server${{ matrix.bin_ext }}" \
+             "src-tauri/binaries/relationship-graph-backend-${{ matrix.target }}${{ matrix.bin_ext }}"
 
-      - name: Copy frontend to electron (Windows)
-        shell: pwsh
-        run: |
-          if (Test-Path electron/frontend) { Remove-Item -Recurse -Force electron/frontend }
-          Copy-Item -Recurse frontend/build electron/frontend
-
-      - name: Set Electron app version from tag
-        working-directory: electron
-        shell: pwsh
-        run: |
-          $version = "${{ github.ref_name }}".TrimStart("v")
-          $pkg = Get-Content package.json | ConvertFrom-Json
-          $pkg.version = $version
-          $pkg | ConvertTo-Json -Depth 10 | Set-Content package.json
-          Write-Host "Set version to $version"
-
-      - name: Build Electron app (Windows)
-        working-directory: electron
-        run: |
-          npm install
-          npm run build:win
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: windows-installer
-          path: dist/**/*.exe
+          name: backend-${{ matrix.os }}
+          path: src-tauri/binaries/*
 
-  build-mac:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
-      - name: Install Python dependencies
-        working-directory: backend
-        run: |
-          pip install -r requirements.txt
-          pip install pyinstaller
-
-      - name: Bundle backend (Mac)
-        working-directory: backend
-        run: pyinstaller backend.spec --clean --noconfirm
-
-      - name: Build frontend
-        working-directory: frontend
-        run: |
-          npm install
-          npm run build
-
-      - name: Copy frontend to electron (Mac)
-        run: |
-          rm -rf electron/frontend
-          cp -r frontend/build electron/frontend
-
-      - name: Set Electron app version from tag
-        working-directory: electron
-        run: |
-          version="${{ github.ref_name }}"
-          version="${version#v}"
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json'));
-            pkg.version = '$version';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-          "
-          echo "Set version to $version"
-
-      - name: Build Electron app (Mac)
-        working-directory: electron
-        run: |
-          npm install
-          npm run build:mac
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Mac artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: mac-installer
-          path: dist/**/*.dmg
-
-  release:
-    needs: [build-windows, build-mac]
-    runs-on: ubuntu-latest
+  build-tauri:
+    needs: build-backend
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
     steps:
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-installer
-          path: installers/windows
+      - uses: actions/checkout@v4
 
-      - name: Download Mac artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: mac-installer
-          path: installers/mac
+          name: backend-${{ matrix.os }}
+          path: src-tauri/binaries
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/setup-node@v4
         with:
-          name: Relationship Graph ${{ github.ref_name }}
-          body: |
+          node-version: 20
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm install
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Relationship Graph ${{ github.ref_name }}"
+          releaseBody: |
             ## Relationship Graph ${{ github.ref_name }}
 
             ### Downloads
-            - **Windows** — download the `.exe` installer below
-            - **Mac** — download the `.dmg` installer below
+            - **Windows** — download the `.msi` installer below
+            - **Mac** — download the `.dmg` below
 
             ### Installation
-            **Windows:** Run the installer and follow the prompts. A desktop shortcut will be created automatically.
+            **Windows:** Run the installer and follow the prompts.
             **Mac:** Open the `.dmg`, drag the app to your Applications folder. If you see a "damaged" error, run `xattr -cr "/Applications/Relationship Graph.app"` in Terminal.
 
             ### Notes
             - Your data is stored locally — no account needed
-            - Works fully offline (AI suggestions require an Anthropic API key)
-          files: |
-            installers/windows/**/*.exe
-            installers/mac/**/*.dmg
-          draft: true
+            - Works fully offline (AI suggestions require a Groq API key)
+          releaseDraft: true
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

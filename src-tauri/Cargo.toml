@@ -1,0 +1,31 @@
+[package]
+name = "relationship-graph"
+version = "1.0.0"
+description = "Relationship Graph desktop app"
+authors = ["Justin Cheng"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+
+[profile.release]
+# Keep the binary itself small — this is where a chunk of the
+# "bloat" savings over Electron actually comes from.
+#
+# Deliberately NOT setting panic = "abort" here: it saves a modest amount
+# of size by dropping unwind tables, but it also skips all Drop-based
+# cleanup on any panic anywhere in the app — including whatever would kill
+# the backend sidecar process. That tradeoff isn't worth it; an orphaned
+# Python process left running in the background is a worse outcome than
+# a slightly larger binary.
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

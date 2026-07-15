@@ -1,15 +1,52 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // api.ts — All HTTP calls to the FastAPI backend.
-// Base URL always points to localhost:8000 whether running in dev or packaged.
+//
+// Base URL is resolved once, lazily, and cached:
+//   - Inside the Tauri shell, the backend runs on a port chosen dynamically
+//     at launch (see src-tauri/src/main.rs) — we ask for it via the
+//     `get_backend_port` command instead of hardcoding a port here.
+//   - Outside Tauri (e.g. `npm run dev` open directly in a browser tab, with
+//     the backend started manually via `uvicorn main:app --reload`), there's
+//     no Tauri bridge to ask, so we fall back to DEFAULT_PORT.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Person, RelationshipData, TimelineEntry, Interest, Tag } from "./types";
 
-const BASE = "http://127.0.0.1:8000";
+const DEFAULT_PORT = 8000;
+
+let cachedBase: string | null = null;
+let baseResolution: Promise<string> | null = null;
+
+async function resolveBase(): Promise<string> {
+  if (cachedBase) return cachedBase;
+  if (baseResolution) return baseResolution;
+
+  baseResolution = (async () => {
+    // window.__TAURI_INTERNALS__ only exists when running inside the Tauri
+    // shell — a plain browser tab (or a future non-Tauri deployment) won't
+    // have it, so this stays a no-op fallback rather than an error.
+    if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const port = await invoke<number>("get_backend_port");
+        cachedBase = `http://127.0.0.1:${port}`;
+        return cachedBase;
+      } catch {
+        // Fall through to the default below — better to try the fixed
+        // port than to hard-fail the whole app over this.
+      }
+    }
+    cachedBase = `http://127.0.0.1:${DEFAULT_PORT}`;
+    return cachedBase;
+  })();
+
+  return baseResolution;
+}
 
 // Generic fetch wrapper — throws on non-OK responses with the backend's detail message.
 async function req<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const base = await resolveBase();
+  const res = await fetch(`${base}${path}`, {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
@@ -101,4 +138,18 @@ export const api = {
     req<{ ok: boolean }>("/layout", {
       method: "PUT", body: JSON.stringify({ positions }),
     }),
+
+  // ── Export / Import / Backup ─────────────────────────────────────────────────
+  // These used to be raw fetch() calls duplicated directly in App.tsx, each
+  // re-hardcoding the backend URL — moved here so there's exactly one place
+  // that knows how to reach the backend.
+
+  getExport: () => req<any>("/export"),
+
+  importGraph: (payload: any) =>
+    req<{ ok: boolean; people: number }>("/import", {
+      method: "POST", body: JSON.stringify(payload),
+    }),
+
+  getBackupPath: () => req<{ path: string }>("/backup-path"),
 };

@@ -69,13 +69,11 @@ export default function App() {
       // Initialise export hash and backup path on first load
       if (!lastExportHashRef.current) {
         try {
-          const exportRes = await fetch("http://127.0.0.1:8000/export");
-          const exportData = await exportRes.json();
+          const exportData = await api.getExport();
           lastExportHashRef.current = graphHash(exportData.people || []);
         } catch {}
         try {
-          const pathRes = await fetch("http://127.0.0.1:8000/backup-path");
-          const pathData = await pathRes.json();
+          const pathData = await api.getBackupPath();
           setBackupPath(pathData.path || "");
         } catch {}
       }
@@ -90,7 +88,7 @@ export default function App() {
         }
       }
     } catch (e: any) {
-      setError("Cannot connect to backend. Make sure the FastAPI server is running on port 8000.");
+      setError("Cannot connect to backend. Make sure the FastAPI server is running.");
     }
     setLoading(false);
   }, []);
@@ -143,22 +141,70 @@ export default function App() {
     await loadPeople();
   };
 
-  // Compute a lightweight hash of the current graph for change detection.
-  // Uses people count + sorted name+tag fingerprint — fast and good enough.
+  // Fast, deterministic string hash (cyrb53-style). Not cryptographic —
+  // just needs to be collision-resistant enough to catch real content
+  // changes, and cheap to run on every load without hashing megabytes of
+  // base64 photo data as a giant string comparison.
+  const fastHash = (str: string): string => {
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+  };
+
+  // Compute a hash of the current graph for "unsaved changes" detection.
+  //
+  // The previous version only fingerprinted name + primary_tag + outgoing
+  // edge *count* — it missed changes to descriptions, photos, timeline
+  // entries, tags, profile fields, and (critically) relationship label/
+  // sentiment edits, since only the count of edges was hashed, not their
+  // content. That meant editing a relationship from "Friend" to "Ex" and
+  // then resetting/importing over the graph would skip the safety-net
+  // export prompt entirely, silently discarding the edit.
+  //
+  // Canvas x/y position is intentionally excluded: positions are already
+  // continuously auto-saved via /layout and aren't the kind of change this
+  // "back up before you lose it" prompt is meant to protect — including
+  // them would nag on every drag.
   const graphHash = (data: any[]): string => {
     const sig = data
-      .map(p => `${p.name}|${p.primary_tag}|${p.outgoing?.length ?? 0}`)
+      .map(p => {
+        const tags = (p.tags ?? []).map((t: any) => t.label).sort().join(";");
+        const timeline = (p.timeline ?? [])
+          .map((e: any) => `${e.date}:${e.note}`)
+          .sort()
+          .join(";");
+        const interests = (p.interests ?? [])
+          .map((i: any) => `${i.type}:${i.label}:${i.confirmed}`)
+          .sort()
+          .join(";");
+        const relationships = (p.relationships ?? p.outgoing ?? [])
+          .map((r: any) => `${r.to_id}:${r.label}:${r.sentiment}`)
+          .sort()
+          .join(";");
+        return [
+          p.name, p.primary_tag, p.occupation, p.company, p.location,
+          p.phone, p.email, p.linkedin, p.description, p.birthday,
+          p.twitter, p.instagram, p.github, p.website, p.skills,
+          p.photo?.length ?? 0, // length, not full base64 — avoids hashing megabytes per photo
+          tags, timeline, interests, relationships,
+        ].join("|");
+      })
       .sort()
       .join(",");
-    return `${data.length}:${sig}`;
+    return fastHash(`${data.length}:${sig}`);
   };
 
   // Returns true if the user confirms they want to proceed despite unsaved changes.
   // If no changes since last export, returns true immediately without prompting.
   const confirmIfUnsaved = async (): Promise<boolean> => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/export");
-      const data = await res.json();
+      const data = await api.getExport();
       const currentHash = graphHash(data.people || []);
 
       // No changes since last export — proceed silently
@@ -192,8 +238,7 @@ export default function App() {
   // Trigger a JSON download of the full graph data from the export endpoint.
   const handleExport = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/export");
-      const data = await res.json();
+      const data = await api.getExport();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -224,15 +269,7 @@ export default function App() {
       try {
         const text = await file.text();
         const payload = JSON.parse(text);
-        const res = await fetch("http://127.0.0.1:8000/import", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ detail: res.statusText }));
-          throw new Error(err.detail || "Import failed");
-        }
+        await api.importGraph(payload);
         await loadPeople();
         setSelectedId(null);
       } catch (e: any) {
@@ -254,11 +291,7 @@ export default function App() {
     try {
       // POST empty graph to /import — backend saves a timestamped backup
       // to the user data directory before wiping, no download dialog needed.
-      await fetch("http://127.0.0.1:8000/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ version: 1, exported_at: new Date().toISOString(), people: [] }),
-      });
+      await api.importGraph({ version: 1, exported_at: new Date().toISOString(), people: [] });
       await loadPeople();
       setSelectedId(null);
       sessionStorage.removeItem("me-setup-dismissed");

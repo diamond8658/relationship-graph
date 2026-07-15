@@ -47,6 +47,19 @@ class Person(Base):
     interests = relationship("PersonInterest", back_populates="person", cascade="all, delete-orphan")
     outgoing = relationship("Relationship", foreign_keys="Relationship.from_id", back_populates="from_person", cascade="all, delete-orphan")
     incoming = relationship("Relationship", foreign_keys="Relationship.to_id", back_populates="to_person", cascade="all, delete-orphan")
+    # Previously missing — these two were the source of orphaned rows when a
+    # Person was deleted while they had pending AI suggestions.
+    outgoing_relationship_suggestions = relationship(
+        "RelationshipSuggestion", foreign_keys="RelationshipSuggestion.from_id",
+        back_populates="from_person", cascade="all, delete-orphan",
+    )
+    incoming_relationship_suggestions = relationship(
+        "RelationshipSuggestion", foreign_keys="RelationshipSuggestion.to_id",
+        back_populates="to_person", cascade="all, delete-orphan",
+    )
+    profile_suggestions = relationship(
+        "ProfileSuggestion", back_populates="person", cascade="all, delete-orphan",
+    )
 
 
 class PersonTag(Base):
@@ -107,7 +120,14 @@ class RelationshipSuggestion(Base):
     source = Column(Text, default="")              # Excerpt that triggered suggestion
     confirmed = Column(Boolean, default=False)
 
-    from_person = relationship("Person", foreign_keys="RelationshipSuggestion.from_id")
+    from_person = relationship(
+        "Person", foreign_keys="RelationshipSuggestion.from_id",
+        back_populates="outgoing_relationship_suggestions",
+    )
+    to_person = relationship(
+        "Person", foreign_keys="RelationshipSuggestion.to_id",
+        back_populates="incoming_relationship_suggestions",
+    )
 
 
 class ProfileSuggestion(Base):
@@ -123,7 +143,10 @@ class ProfileSuggestion(Base):
     value = Column(Text, nullable=False)           # Suggested value
     confirmed = Column(Boolean, default=False)
 
-    person = relationship("Person", foreign_keys="ProfileSuggestion.person_id")
+    person = relationship(
+        "Person", foreign_keys="ProfileSuggestion.person_id",
+        back_populates="profile_suggestions",
+    )
 
 
 class Relationship(Base):

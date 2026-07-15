@@ -8,22 +8,21 @@ Head to the [Releases](https://github.com/diamond8658/relationship-graph/release
 
 ## Stack
 
-- **Frontend:** React + TypeScript (Create React App)
+- **Frontend:** React + TypeScript (Vite)
 - **Backend:** FastAPI + SQLite (SQLAlchemy)
-- **Desktop:** Electron + PyInstaller
+- **Desktop:** Tauri + PyInstaller
 
 ## Project Structure
 
 ```
 relationship-graph/
 ├── backend/
-│   ├── main.py             # FastAPI routes (People, Tags, Timeline, Interests, Relationships, Layout, Export)
+│   ├── main.py             # FastAPI routes (People, Tags, Timeline, Interests, Relationships, Layout, Export/Import)
 │   ├── models.py           # SQLAlchemy ORM models
 │   ├── schemas.py          # Pydantic request/response schemas + export models
 │   ├── database.py         # SQLAlchemy engine and session setup
 │   ├── server.py           # PyInstaller entry point (production only)
 │   ├── backend.spec        # PyInstaller build spec
-│   ├── migrate.py          # DB migration script for schema changes
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
@@ -37,14 +36,16 @@ relationship-graph/
 │   │   ├── api.ts          # All HTTP calls to the FastAPI backend
 │   │   ├── App.tsx         # Root component — owns global state and wiring
 │   │   └── index.tsx
-│   └── public/
-│       └── index.html
-├── electron/
-│   ├── main.js             # Electron main process — starts backend, creates window
-│   └── package.json        # Electron + electron-builder config
+│   ├── public/
+│   │   └── splash.html     # Startup splash screen shown by the Tauri shell
+│   ├── index.html          # Vite entry point
+│   └── vite.config.ts
+├── src-tauri/
+│   ├── src/main.rs         # Tauri shell — spawns the backend sidecar, splash/readiness handling
+│   ├── tauri.conf.json     # Window config, sidecar binary name, splash + main window setup
+│   └── capabilities/       # Tauri v2 permission manifest
 ├── .github/workflows/
-│   └── build.yml           # CI: builds Windows + Mac installers on tag push
-└── build-win.ps1           # One-command local Windows build script
+│   └── build.yml           # CI: builds the backend sidecar, then bundles with Tauri, on tag push
 ```
 
 ## Getting Started (Development)
@@ -61,31 +62,42 @@ uvicorn main:app --reload
 
 API runs at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
 
+Note: this fixed port only applies when running the backend manually like
+this. Inside the packaged Tauri app, the backend runs on a port chosen
+dynamically at launch (see `src-tauri/src/main.rs`), and the frontend asks
+for it via the `get_backend_port` Tauri command instead of assuming 8000.
+
+Schema migrations run automatically on every backend startup (see
+`run_migrations()` in `main.py`) — no separate migration script to run.
+
 ### Frontend
 
 ```powershell
 cd frontend
 npm install
-npm start
+npm run dev
 ```
 
-App opens at `http://localhost:3000`.
+App opens at `http://localhost:5173`.
 
-### Run both at once
+### Desktop shell (Tauri)
+
+```powershell
+cd src-tauri
+cargo tauri dev
+```
+
+This starts the Vite dev server, opens a native window pointed at it, and
+runs the backend the normal way in a separate terminal is recommended for
+faster iteration (rebuilding the PyInstaller sidecar binary on every change
+is slow — see the sidecar naming note in `backend.spec` for production
+builds).
+
+### Run backend + frontend at once (browser, no Tauri)
 
 ```powershell
 Start-Process powershell -ArgumentList '-NoExit','-Command','cd backend; .\venv\Scripts\Activate.ps1; uvicorn main:app --reload'
-Start-Process powershell -ArgumentList '-NoExit','-Command','cd frontend; npm start'
-```
-
-### Database migrations
-
-If upgrading from an older version with schema changes:
-
-```powershell
-cd backend
-.\venv\Scripts\Activate.ps1
-python migrate.py
+Start-Process powershell -ArgumentList '-NoExit','-Command','cd frontend; npm run dev'
 ```
 
 ## Features
@@ -125,7 +137,7 @@ python migrate.py
 - **Natural language dates** — type "today", "yesterday", "monday", "last week", "last month"
 - Calendar picker alongside the text field — both stay in sync
 - **Enter** in the note field submits immediately (Shift+Enter for newline)
-- **Generate suggestions** button — uses AI (Anthropic API) to extract likes/dislikes from notes
+- **Generate suggestions** button — uses AI (Groq API) to extract likes/dislikes from notes
 - Confirmed interests show as color-coded pills (green = likes, red = dislikes)
 
 ### Search
@@ -136,26 +148,33 @@ python migrate.py
 ### Data
 - All data stored locally in SQLite — no account, no cloud required
 - **↓ Export** button downloads a full JSON backup with all people, relationships, timelines, and interests (validated via Pydantic schemas)
-- Works fully offline (AI suggestions require an Anthropic API key)
+- Works fully offline (AI suggestions require a Groq API key (GROQ_API_KEY))
 
 ## Building the Desktop App
 
-### Windows (local build)
+### Local build (any platform)
 
-```powershell
-.\build-win.ps1
+```bash
+cd src-tauri
+cargo tauri build
 ```
+
+Produces a native installer in `src-tauri/target/release/bundle/` — `.msi`
+on Windows, `.dmg`/`.app` on Mac. Requires the Rust toolchain (`rustup.rs`)
+and, on first run, `cargo tauri icon path/to/source-icon.png` if
+`src-tauri/icons/` hasn't been populated yet.
 
 ### CI (Windows + Mac via GitHub Actions)
 
 Push a version tag to trigger builds for both platforms:
 
-```powershell
+```bash
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-Both installers will be built by GitHub Actions and attached to a GitHub Release automatically.
+CI builds the PyInstaller backend sidecar per-OS, then bundles it with
+Tauri; both installers are attached to a GitHub Release automatically.
 
 ## API Endpoints
 
@@ -179,12 +198,14 @@ Both installers will be built by GitHub Actions and attached to a GitHub Release
 | DELETE | /relationships/{id} | Delete a relationship |
 | PUT | /layout | Batch save node positions |
 | GET | /export | Export all data as JSON (Pydantic-validated) |
+| POST | /import | Replace the entire graph from an export file (auto-backs up first) |
+| GET | /health | Lightweight readiness probe (used by the Tauri shell on startup) |
 
 ## Future Features
 
 - **JSON import** — restore from an export or merge two graphs
 - **Edge routing** — arrows that snake around nodes for readability (requires A* pathfinding on a visibility graph)
-- **Local AI suggestions** — swap Anthropic API for a local Ollama model (Llama 3.1) fine-tuned on your confirmed interests over time
+- **Local AI suggestions** — swap the Groq API for a local Ollama model (Llama 3.1) fine-tuned on your confirmed interests over time
 - **Relationship strength** — numeric weight that thickens strong ties and fades weak ones
 - **Reminders** — track "last contacted" date and surface people you haven't reached out to recently
 - **Graph statistics** — degree centrality, mutual connections, cluster analysis

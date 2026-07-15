@@ -1,16 +1,9 @@
 import React, { useRef, useEffect, useCallback } from "react";
 import { Person } from "../types";
 import { api } from "../api";
-
-import { personColors } from "../colors";
-const SENTIMENT_COLORS: Record<string, string> = {
-  hates: '#E3000F',
-  dislikes: '#ff6e00',
-  neutral: '#888780',
-  likes: '#03c04a',
-  loves: '#4b0082',
-};
-function sentimentColor(s: string) { return SENTIMENT_COLORS[s] || SENTIMENT_COLORS.neutral; }
+import { personColors, SENTIMENT_COLORS, sentimentColor } from "../colors";
+import { blendColors, drawEdgeSimple, drawEdgeDir } from "./graphDrawing";
+import { PersonDetailModal, ConnectModal, HoverTooltip } from "./GraphModals";
 
 interface GraphProps {
   people: Person[];
@@ -23,47 +16,6 @@ interface GraphProps {
   onLayoutSaved?: (positions: Record<string, { x: number; y: number }>) => void;
   onUpdated?: () => void;
 }
-
-const SENTIMENT_COLORS_MODAL: Record<string, string> = {
-  hates: '#E3000F', dislikes: '#ff6e00', neutral: '#888780',
-  likes: '#03c04a', loves: '#4b0082',
-};
-
-const ModalRelationships: React.FC<{ modal: any; people: any[] }> = ({ modal, people }) => {
-  const [open, setOpen] = React.useState(false);
-  const total = modal.outgoing.length + modal.incoming.length;
-  return (
-    <div style={{ marginBottom: 4 }}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f7f7f7", border: "none", borderRadius: 6, padding: "7px 10px", cursor: "pointer", fontSize: 12, color: "#444", fontWeight: 500 }}
-      >
-        <span>Relationships ({total})</span>
-        <span style={{ fontSize: 10 }}>{open ? "▲" : "▼"}</span>
-      </button>
-      {open && (
-        <div style={{ padding: "8px 4px 0" }}>
-          {modal.outgoing.map((rel: any) => (
-            <div key={rel.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 7 }}>
-              <div style={{ width: 10, height: 10, borderRadius: "50%", background: SENTIMENT_COLORS_MODAL[rel.sentiment] || "#888", flexShrink: 0, marginTop: 2 }} />
-              <span style={{ fontSize: 12, color: "#555", lineHeight: 1.4 }}>
-                <strong style={{ color: "#222" }}>{modal.name}</strong> sees <strong style={{ color: "#222" }}>{people.find((p: any) => p.id === rel.to_id)?.name || rel.to_id}</strong> as <em>"{rel.label}"</em>
-              </span>
-            </div>
-          ))}
-          {modal.incoming.map((rel: any) => (
-            <div key={rel.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 7 }}>
-              <div style={{ width: 10, height: 10, borderRadius: "50%", background: SENTIMENT_COLORS_MODAL[rel.sentiment] || "#888", flexShrink: 0, opacity: 0.5, marginTop: 2 }} />
-              <span style={{ fontSize: 12, color: "#555", lineHeight: 1.4 }}>
-                <strong style={{ color: "#222" }}>{people.find((p: any) => p.id === rel.from_id)?.name || rel.from_id}</strong> sees <strong style={{ color: "#222" }}>{modal.name}</strong> as <em>"{rel.label}"</em>
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
 
 export const Graph: React.FC<GraphProps> = ({
   people, selectedId, filterText, simplified = false, onSelectPerson, onDragEnd, onUntangleRef, onLayoutSaved, onUpdated,
@@ -736,107 +688,6 @@ export const Graph: React.FC<GraphProps> = ({
     });
   }, [people, selectedId, filterText, simplified, onSelectPerson, resolveCollisions]);
 
-  // Blend two hex colors by averaging their RGB components
-  function blendColors(a: string, b: string): string {
-    const parse = (h: string) => [
-      parseInt(h.slice(1,3),16),
-      parseInt(h.slice(3,5),16),
-      parseInt(h.slice(5,7),16),
-    ];
-    const [ar,ag,ab] = parse(a);
-    const [br,bg,bb] = parse(b);
-    const r = Math.round((ar+br)/2).toString(16).padStart(2,'0');
-    const g = Math.round((ag+bg)/2).toString(16).padStart(2,'0');
-    const bh = Math.round((ab+bb)/2).toString(16).padStart(2,'0');
-    return `#${r}${g}${bh}`;
-  }
-
-  // Simplified edge — single straight line, no arrowhead, no label
-  function drawEdgeSimple(
-    layer: SVGGElement, a: { x: number; y: number }, b: { x: number; y: number },
-    col: string, opacity: number, ns: string
-  ) {
-    const dx = b.x - a.x, dy = b.y - a.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < 1) return;
-    const ux = dx / dist, uy = dy / dist;
-    const NR = 26;
-    const x1 = a.x + ux * NR, y1 = a.y + uy * NR;
-    const x2 = b.x - ux * NR, y2 = b.y - uy * NR;
-    const line = document.createElementNS(ns, "line");
-    line.setAttribute("x1", String(x1)); line.setAttribute("y1", String(y1));
-    line.setAttribute("x2", String(x2)); line.setAttribute("y2", String(y2));
-    line.setAttribute("stroke", col); line.setAttribute("stroke-width", "2");
-    line.setAttribute("opacity", String(opacity));
-    layer.appendChild(line);
-  }
-
-  function drawEdgeDir(
-    layer: SVGGElement, a: { x: number; y: number }, b: { x: number; y: number },
-    label: string, col: string, opacity: number, ns: string, side: 1 | -1 | 0,
-    fromId?: string, toId?: string
-  ) {
-    const dx = b.x - a.x, dy = b.y - a.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < 1) return;
-    const ux = dx / dist, uy = dy / dist;
-    // perpendicular unit vector
-    const px = -uy, py = ux;
-    const NR = 26; // node radius
-    // Parallel offset: bidirectional arrows get ±10px, one-way get a small unique jitter
-    // so arrows between different pairs don't perfectly overlap
-    let lateralOff = side !== 0 ? 10 * side : 0;
-    if (side === 0 && fromId && toId) {
-      const hash = (fromId + toId).split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
-      lateralOff = ((hash % 7) - 3) * 1.5; // -4.5 to +4.5 px unique per pair
-    }
-    // Arrow starts on the surface of node A facing B, shifted laterally
-    const x1 = a.x + ux * NR + px * lateralOff, y1 = a.y + uy * NR + py * lateralOff;
-    // Arrow ends on the surface of node B facing A, shifted same amount
-    const x2 = b.x - ux * NR + px * lateralOff, y2 = b.y - uy * NR + py * lateralOff;
-    // Straight line — control point at midpoint = no curve
-    const cpx = (x1 + x2) / 2;
-    const cpy = (y1 + y2) / 2;
-
-    const path = document.createElementNS(ns, "path");
-    path.setAttribute("d", `M${x1},${y1} Q${cpx},${cpy} ${x2},${y2}`);
-    path.setAttribute("fill", "none"); path.setAttribute("stroke", col);
-    path.setAttribute("stroke-width", "2.5"); path.setAttribute("opacity", String(opacity));
-    const sentimentKey = Object.entries(SENTIMENT_COLORS).find(([,c]) => c === col)?.[0] || "neutral";
-    path.setAttribute("marker-end", `url(#rg-arr-${sentimentKey})`);
-    layer.appendChild(path);
-
-    if (label) {
-      const mx = (x1 + x2) / 2;
-      const my = (y1 + y2) / 2;
-      // Offset label perpendicularly away from center line
-      // Offset label further from the arrow line so it doesn't cover arrows
-      const labelDist = 18;
-      const labelOffsetX = px * labelDist * (side !== 0 ? side : 1);
-      const labelOffsetY = py * labelDist * (side !== 0 ? side : 1);
-      const lx = mx + labelOffsetX;
-      const ly = my + labelOffsetY;
-      const display = label.length > 18 ? label.slice(0, 16) + "…" : label;
-      const pw = Math.min(display.length * 5.8 + 10, 120), ph = 15;
-
-      const bg = document.createElementNS(ns, "rect");
-      bg.setAttribute("x", String(lx - pw / 2)); bg.setAttribute("y", String(ly - ph / 2));
-      bg.setAttribute("width", String(pw)); bg.setAttribute("height", String(ph));
-      bg.setAttribute("rx", "4"); bg.setAttribute("fill", col);
-      bg.setAttribute("opacity", String(opacity * 0.85));
-      layer.appendChild(bg);
-
-      const txt = document.createElementNS(ns, "text");
-      txt.setAttribute("x", String(lx)); txt.setAttribute("y", String(ly));
-      txt.setAttribute("text-anchor", "middle"); txt.setAttribute("dominant-baseline", "central");
-      txt.setAttribute("font-size", "10"); txt.setAttribute("fill", "#ffffff");
-      txt.setAttribute("font-weight", "600");
-      txt.setAttribute("opacity", String(opacity)); txt.setAttribute("pointer-events", "none");
-      txt.textContent = display;
-      layer.appendChild(txt);
-    }
-  }
-
   useEffect(() => { renderRef.current = render; render(); }, [render]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
@@ -946,161 +797,31 @@ export const Graph: React.FC<GraphProps> = ({
       </div>
 
       {/* Drag-to-connect modal */}
-      {connectModal && (() => {
-        const fromPerson = people.find(p => p.id === connectModal.fromId);
-        const toPerson = people.find(p => p.id === connectModal.toId);
-        const SENTIMENT_COLORS_C: Record<string, string> = { hates: '#E3000F', dislikes: '#ff6e00', neutral: '#888780', likes: '#03c04a', loves: '#4b0082' };
-        const SENTIMENTS_C = ['hates','dislikes','neutral','likes','loves'];
-        return (
-          <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 40 }}
-            onClick={e => { if (e.target === e.currentTarget) setConnectModal(null); }}>
-            <div style={{ background: "#fff", borderRadius: 10, padding: 20, width: 260, boxShadow: "0 8px 32px rgba(0,0,0,0.18)", display: "flex", flexDirection: "column", gap: 10 }}
-              onClick={e => e.stopPropagation()}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "#222" }}>
-                Connect <span style={{ color: "#378ADD" }}>{fromPerson?.name}</span> → <span style={{ color: "#378ADD" }}>{toPerson?.name}</span>
-              </div>
-              <input
-                autoFocus
-                value={connectLabel}
-                onChange={e => setConnectLabel(e.target.value)}
-                placeholder="Label (e.g. Friend, Colleague)"
-                onKeyDown={async e => {
-                  if (e.key === "Enter" && connectLabel.trim()) {
-                    await api.createRelationship({ from_id: connectModal.fromId, to_id: connectModal.toId, label: connectLabel.trim(), sentiment: connectSentiment });
-                    setConnectModal(null); setConnectLabel(""); onUpdated?.();
-                  }
-                  if (e.key === "Escape") setConnectModal(null);
-                }}
-                style={{ fontSize: 13, padding: "6px 10px", border: "1px solid #ccc", borderRadius: 6, outline: "none" }}
-              />
-              <select value={connectSentiment} onChange={e => setConnectSentiment(e.target.value)}
-                style={{ fontSize: 13, padding: "5px 8px", border: `1px solid ${SENTIMENT_COLORS_C[connectSentiment]}`, borderRadius: 6, color: SENTIMENT_COLORS_C[connectSentiment], fontWeight: 600 }}>
-                {SENTIMENTS_C.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
-              </select>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={async () => {
-                  if (!connectLabel.trim()) return;
-                  await api.createRelationship({ from_id: connectModal.fromId, to_id: connectModal.toId, label: connectLabel.trim(), sentiment: connectSentiment });
-                  setConnectModal(null); setConnectLabel(""); onUpdated?.();
-                }} style={{ flex: 2, padding: "6px 0", background: connectLabel.trim() ? "#378ADD" : "#ccc", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 500 }}>Connect</button>
-                <button onClick={() => setConnectModal(null)} style={{ flex: 1, padding: "6px 0", background: "#f0f0f0", color: "#444", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>Cancel</button>
-              </div>
-              <div style={{ fontSize: 10, color: "#aaa", textAlign: "center" }}>Press Enter to connect, Escape to cancel</div>
-            </div>
-          </div>
-        );
-      })()}
+      {connectModal && (
+        <ConnectModal
+          fromPerson={people.find(p => p.id === connectModal.fromId)}
+          toPerson={people.find(p => p.id === connectModal.toId)}
+          label={connectLabel}
+          onLabelChange={setConnectLabel}
+          sentiment={connectSentiment}
+          onSentimentChange={setConnectSentiment}
+          onConnect={async () => {
+            if (!connectLabel.trim()) return;
+            await api.createRelationship({ from_id: connectModal.fromId, to_id: connectModal.toId, label: connectLabel.trim(), sentiment: connectSentiment });
+            setConnectModal(null); setConnectLabel(""); onUpdated?.();
+          }}
+          onCancel={() => setConnectModal(null)}
+        />
+      )}
 
       {/* Hover tooltip */}
       {tooltip && !draggingRef.current && (
-        <div style={{
-          position: "absolute",
-          left: tooltip.x + 16,
-          top: tooltip.y - 8,
-          background: "#fff",
-          border: "1px solid #e0e0e0",
-          borderRadius: 8,
-          padding: "8px 12px",
-          boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
-          pointerEvents: "none",
-          zIndex: 20,
-          maxWidth: 200,
-          fontSize: 12,
-        }}>
-          <div style={{ fontWeight: 600, color: "#222", marginBottom: 2 }}>{tooltip.person.name}</div>
-          <div style={{ color: "#888", fontSize: 11, marginBottom: tooltip.person.occupation ? 4 : 0 }}>{tooltip.person.primary_tag || tooltip.person.occupation || ""}</div>
-          {tooltip.person.occupation && <div style={{ color: "#444", lineHeight: 1.4 }}>{tooltip.person.occupation}{tooltip.person.company ? ` @ ${tooltip.person.company}` : ""}</div>}
-        </div>
+        <HoverTooltip person={tooltip.person} x={tooltip.x} y={tooltip.y} />
       )}
 
       {/* Click modal */}
       {modal && (
-        <div
-          style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 30 }}
-          onClick={() => setModal(null)}
-        >
-          <div
-            style={{ background: "#fff", borderRadius: 12, padding: 24, width: 340, maxHeight: "80%", overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Avatar */}
-            <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
-              {modal.photo ? (
-                <img src={modal.photo} alt="" style={{ width: 60, height: 60, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
-              ) : (
-                <div style={{
-                  width: 60, height: 60, borderRadius: "50%", flexShrink: 0,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 22, fontWeight: 700, background: "#E6F1FB", color: "#378ADD",
-                }}>
-                  {modal.name.split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2)}
-                </div>
-              )}
-              <div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: "#111" }}>{modal.name}</div>
-                <div style={{ fontSize: 12, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em" }}>{modal.primary_tag || modal.occupation || ""}</div>
-              </div>
-            </div>
-
-            {/* About */}
-            {(modal.occupation || modal.phone || modal.email) && (
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>About</div>
-                {modal.occupation && (
-                  <div style={{ fontSize: 13, color: "#333", lineHeight: 1.6, marginBottom: 4 }}>
-                    {modal.occupation}{modal.company ? ` @ ${modal.company}` : ""}{modal.location ? ` · ${modal.location}` : ""}
-                  </div>
-                )}
-                {modal.phone && (
-                  <div style={{ fontSize: 12, color: "#555", marginBottom: 3, display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ color: "#aaa", fontSize: 11 }}>📞</span>{modal.phone}
-                  </div>
-                )}
-                {modal.email && (
-                  <div style={{ fontSize: 12, color: "#555", display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ color: "#aaa", fontSize: 11 }}>✉</span>
-                    <a href={`mailto:${modal.email}`} style={{ color: "#378ADD", textDecoration: "none" }}>{modal.email}</a>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Description */}
-            {modal.description && (
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Description</div>
-                <div style={{ fontSize: 13, color: "#333", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{modal.description}</div>
-              </div>
-            )}
-
-            {/* Timeline */}
-            {modal.timeline && modal.timeline.length > 0 && (
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 11, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>Timeline</div>
-                <div style={{ position: "relative", paddingLeft: 18 }}>
-                  <div style={{ position: "absolute", left: 6, top: 4, bottom: 4, width: 2, background: "#e0e0e0", borderRadius: 1 }} />
-                  {[...modal.timeline].reverse().map((entry: any) => (
-                    <div key={entry.id} style={{ position: "relative", marginBottom: 12 }}>
-                      <div style={{ position: "absolute", left: -15, top: 3, width: 8, height: 8, borderRadius: "50%", background: "#378ADD", border: "2px solid #fff", boxShadow: "0 0 0 1px #378ADD" }} />
-                      <div style={{ fontSize: 10, color: "#888", fontWeight: 600, marginBottom: 2 }}>{entry.date}</div>
-                      <div style={{ fontSize: 12, color: "#444", lineHeight: 1.5 }}>{entry.note}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Relationships — collapsible */}
-            {(modal.outgoing.length > 0 || modal.incoming.length > 0) && (
-              <ModalRelationships modal={modal} people={people} />
-            )}
-
-            <button
-              onClick={() => setModal(null)}
-              style={{ marginTop: 16, width: "100%", padding: "8px 0", background: "#f0f0f0", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, color: "#444" }}
-            >Close</button>
-          </div>
-        </div>
+        <PersonDetailModal person={modal} people={people} onClose={() => setModal(null)} />
       )}
     </div>
   );

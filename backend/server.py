@@ -19,9 +19,14 @@ from main import app  # noqa: E402
 import uvicorn
 
 if __name__ == '__main__':
+    # The Tauri shell picks a free port at launch and passes it via this env
+    # var so it doesn't have to fight over a fixed port with a previous
+    # crashed instance. Defaults to 8000 for running this file directly
+    # outside of Tauri.
+    port = int(os.environ.get('BACKEND_PORT', '8000'))
     uvicorn.run(
         app,  # pass the app object directly, not the string 'main:app'
         host='127.0.0.1',
-        port=8000,
+        port=port,
         log_level='warning',
     )

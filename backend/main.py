@@ -70,7 +70,13 @@ app = FastAPI(title="Relationship Graph API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8000", "file://", "null"],
+    allow_origins=[
+        "http://localhost:5173",   # Vite dev server (cargo tauri dev / npm run dev)
+        "http://localhost:8000",
+        "tauri://localhost",       # Packaged Tauri app on macOS/Linux
+        "http://tauri.localhost",  # Packaged Tauri app on Windows (WebView2)
+        "file://", "null",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -115,6 +121,15 @@ def groq_call(prompt: str, max_tokens: int = 512) -> str:
 
 
 # ── AI Status & Paths ────────────────────────────────────────────────────────
+
+@app.get("/health")
+def health():
+    """
+    Cheap readiness probe for the desktop shell to poll on startup — no DB
+    query, just confirms the process is up and FastAPI is serving requests.
+    """
+    return {"status": "ok"}
+
 
 @app.get("/backup-path")
 def get_backup_path():

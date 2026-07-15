@@ -30,3 +30,20 @@ export function personColors(primary_tag: string, name: string) {
   if (primary_tag?.toLowerCase() === "me") return ME_COLORS;
   return gc(primary_tag || name);
 }
+
+// Relationship sentiment colors — previously duplicated three separate times
+// across Graph.tsx (a plain constant, a "_MODAL" copy, and a third inline
+// copy in the connect-modal JSX). One source of truth now.
+export const SENTIMENT_COLORS: Record<string, string> = {
+  hates: "#E3000F",
+  dislikes: "#ff6e00",
+  neutral: "#888780",
+  likes: "#03c04a",
+  loves: "#4b0082",
+};
+
+export const SENTIMENTS = ["hates", "dislikes", "neutral", "likes", "loves"];
+
+export function sentimentColor(s: string): string {
+  return SENTIMENT_COLORS[s] || SENTIMENT_COLORS.neutral;
+}

@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default permissions for the main and splash windows","local":true,"windows":["main","splash"],"permissions":["core:default","shell:allow-spawn","shell:allow-kill","dialog:default",{"identifier":"shell:allow-execute","allow":[{"args":true,"name":"binaries/relationship-graph-backend","sidecar":true}]}]}}

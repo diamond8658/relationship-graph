@@ -16,3 +16,11 @@ build/
 
 # CRA
 frontend/build/
+-e 
+# Vite build artifacts
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/binaries/
