@@ -1,0 +1,67 @@
+name: deploy-backend
+
+# Only runs when cloud-backend/ actually changes — pushing frontend or
+# Tauri-shell changes shouldn't rebuild/redeploy the backend.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cloud-backend/**"
+      - ".github/workflows/deploy-backend.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: ./cloud-backend
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/relationship-graph-backend:latest
+            ghcr.io/${{ github.repository_owner }}/relationship-graph-backend:${{ github.sha }}
+          # Reuses layers from the previous build via GitHub Actions cache —
+          # keeps rebuilds fast when only main.py changes, not requirements.txt.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+# ─────────────────────────────────────────────────────────────────────────────
+# That's it for this workflow — it stops at "push a new image to GHCR".
+#
+# Deploying it onto your Unraid box is deliberately NOT automated here via
+# SSH push, to avoid putting SSH keys into GitHub Actions secrets for a
+# personal home server. Instead, run a Watchtower container on Unraid
+# alongside this stack in Dockge — Watchtower polls GHCR periodically and
+# auto-pulls + restarts any container with a newer image, which is the
+# common pattern for exactly this kind of self-hosted setup:
+#
+#   services:
+#     watchtower:
+#       image: containrrr/watchtower
+#       restart: unless-stopped
+#       volumes:
+#         - /var/run/docker.sock:/var/run/docker.sock
+#       command: --interval 300  # check for new images every 5 minutes
+#
+# If GHCR images need to be private, Watchtower also needs registry
+# credentials — see https://containrrr.dev/watchtower/private-registries/.
+#
+# If you'd rather have deploys happen immediately on push instead of
+# waiting for Watchtower's next poll, an SSH-push step can be added here
+# later (appleboy/ssh-action running `docker compose pull && docker compose
+# up -d` on the Unraid box) — just means adding SSH credentials as repo
+# secrets, which is a real tradeoff worth deciding on deliberately rather
+# than defaulting into.
+# ─────────────────────────────────────────────────────────────────────────────

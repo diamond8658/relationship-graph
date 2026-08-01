@@ -7,7 +7,17 @@ __pycache__/
 *.db
 *.sqlite3
 venv/
+py_env/
+*/venv/
+*/py_env/
 .env
+
+# Backend build output and auto-generated backups (contain real personal data)
+backend/dist/
+backend/build/
+backend/backup-*.json
+cloud-backend/dist/
+cloud-backend/build/
 
 # Node
 node_modules/
@@ -24,3 +34,4 @@ frontend/*.tsbuildinfo
 # Tauri / Rust
 src-tauri/target/
 src-tauri/binaries/
+src-tauri/gen/
