@@ -25,6 +25,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Required for cache-to: type=gha below — the default "docker" buildx
+      # driver doesn't support GHA cache export, only "docker-container" does.
+      - uses: docker/setup-buildx-action@v3
+
       - uses: docker/build-push-action@v5
         with:
           context: ./cloud-backend
