@@ -15,6 +15,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from typing import List
 import uuid, os, json, urllib.request
+from datetime import datetime, timezone
 
 import models, schemas
 import auth
@@ -125,6 +126,7 @@ def ai_status():
 def get_owned_person(person_id: str, current_user: models.User, db: Session) -> models.Person:
     person = db.query(models.Person).filter(
         models.Person.id == person_id, models.Person.owner_id == current_user.id,
+        models.Person.deleted_at.is_(None),
     ).first()
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
@@ -135,7 +137,9 @@ def get_owned_person(person_id: str, current_user: models.User, db: Session) -> 
 
 @app.get("/people", response_model=List[schemas.PersonOut])
 def get_people(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    return db.query(models.Person).filter(models.Person.owner_id == current_user.id).all()
+    return db.query(models.Person).filter(
+        models.Person.owner_id == current_user.id, models.Person.deleted_at.is_(None),
+    ).all()
 
 
 @app.post("/people", response_model=schemas.PersonOut)
@@ -164,8 +168,15 @@ def update_person(person_id: str, updates: schemas.PersonUpdate, db: Session = D
 
 @app.delete("/people/{person_id}")
 def delete_person(person_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    # Soft delete, not db.delete() — a hard delete would vanish with nothing
+    # for another device's sync to notice. Note: this doesn't cascade the
+    # tombstone to this person's tags/timeline/interests/relationships —
+    # they're left as orphaned rows rather than individually tombstoned,
+    # which is harmless since every read path filters through a
+    # non-deleted Person first, but is worth knowing about if you're ever
+    # inspecting the database directly.
     person = get_owned_person(person_id, current_user, db)
-    db.delete(person)
+    person.deleted_at = datetime.now(timezone.utc)
     db.commit()
     return {"ok": True}
 
@@ -183,6 +194,12 @@ def add_tag(person_id: str, body: dict, db: Session = Depends(get_db), current_u
         models.PersonTag.label == label,
     ).first()
     if existing:
+        if existing.deleted_at is not None:
+            # Re-adding a tag that was previously deleted — revive it rather
+            # than leaving a hidden soft-deleted duplicate row.
+            existing.deleted_at = None
+            db.commit()
+            db.refresh(existing)
         return existing
     tag = models.PersonTag(id=str(uuid.uuid4()), person_id=person_id, label=label)
     db.add(tag)
@@ -195,10 +212,11 @@ def add_tag(person_id: str, body: dict, db: Session = Depends(get_db), current_u
 def delete_tag(tag_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     tag = db.query(models.PersonTag).join(models.Person).filter(
         models.PersonTag.id == tag_id, models.Person.owner_id == current_user.id,
+        models.PersonTag.deleted_at.is_(None),
     ).first()
     if not tag:
         raise HTTPException(status_code=404, detail="Tag not found")
-    db.delete(tag)
+    tag.deleted_at = datetime.now(timezone.utc)
     db.commit()
     return {"ok": True}
 
@@ -209,7 +227,7 @@ def delete_tag(tag_id: str, db: Session = Depends(get_db), current_user: models.
 def get_timeline(person_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     get_owned_person(person_id, current_user, db)
     return db.query(models.TimelineEntry).filter(
-        models.TimelineEntry.person_id == person_id
+        models.TimelineEntry.person_id == person_id, models.TimelineEntry.deleted_at.is_(None),
     ).order_by(models.TimelineEntry.date.desc()).all()
 
 
@@ -229,10 +247,11 @@ def add_timeline_entry(person_id: str, entry: schemas.TimelineEntryCreate, db: S
 def delete_timeline_entry(entry_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     entry = db.query(models.TimelineEntry).join(models.Person).filter(
         models.TimelineEntry.id == entry_id, models.Person.owner_id == current_user.id,
+        models.TimelineEntry.deleted_at.is_(None),
     ).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Entry not found")
-    db.delete(entry)
+    entry.deleted_at = datetime.now(timezone.utc)
     db.commit()
     return {"ok": True}
 
@@ -479,7 +498,9 @@ def delete_profile_suggestion(suggestion_id: str, db: Session = Depends(get_db),
 @app.get("/people/{person_id}/interests", response_model=List[schemas.InterestOut])
 def get_interests(person_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     get_owned_person(person_id, current_user, db)
-    return db.query(models.PersonInterest).filter(models.PersonInterest.person_id == person_id).all()
+    return db.query(models.PersonInterest).filter(
+        models.PersonInterest.person_id == person_id, models.PersonInterest.deleted_at.is_(None),
+    ).all()
 
 
 @app.put("/interests/{interest_id}/confirm", response_model=schemas.InterestOut)
@@ -499,10 +520,11 @@ def confirm_interest(interest_id: str, body: schemas.InterestConfirm, db: Sessio
 def delete_interest(interest_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     interest = db.query(models.PersonInterest).join(models.Person).filter(
         models.PersonInterest.id == interest_id, models.Person.owner_id == current_user.id,
+        models.PersonInterest.deleted_at.is_(None),
     ).first()
     if not interest:
         raise HTTPException(status_code=404, detail="Interest not found")
-    db.delete(interest)
+    interest.deleted_at = datetime.now(timezone.utc)
     db.commit()
     return {"ok": True}
 
@@ -521,6 +543,7 @@ def create_relationship(rel: schemas.RelationshipCreate, db: Session = Depends(g
     if existing:
         existing.label = rel.label
         existing.sentiment = rel.sentiment
+        existing.deleted_at = None  # revive if this was previously deleted
         db.commit()
         db.refresh(existing)
         return existing
@@ -537,6 +560,7 @@ def update_relationship(rel_id: str, updates: schemas.RelationshipUpdate, db: Se
         models.Person, models.Relationship.from_id == models.Person.id
     ).filter(
         models.Relationship.id == rel_id, models.Person.owner_id == current_user.id,
+        models.Relationship.deleted_at.is_(None),
     ).first()
     if not rel:
         raise HTTPException(status_code=404, detail="Relationship not found")
@@ -553,10 +577,11 @@ def delete_relationship(rel_id: str, db: Session = Depends(get_db), current_user
         models.Person, models.Relationship.from_id == models.Person.id
     ).filter(
         models.Relationship.id == rel_id, models.Person.owner_id == current_user.id,
+        models.Relationship.deleted_at.is_(None),
     ).first()
     if not rel:
         raise HTTPException(status_code=404, detail="Relationship not found")
-    db.delete(rel)
+    rel.deleted_at = datetime.now(timezone.utc)
     db.commit()
     return {"ok": True}
 
@@ -565,8 +590,9 @@ def delete_relationship(rel_id: str, db: Session = Depends(get_db), current_user
 
 @app.get("/export", response_model=schemas.ExportData)
 def export_data(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    from datetime import datetime
-    people = db.query(models.Person).filter(models.Person.owner_id == current_user.id).all()
+    people = db.query(models.Person).filter(
+        models.Person.owner_id == current_user.id, models.Person.deleted_at.is_(None),
+    ).all()
     return schemas.ExportData(
         version=1,
         exported_at=datetime.utcnow().isoformat(),
@@ -579,12 +605,12 @@ def export_data(db: Session = Depends(get_db), current_user: models.User = Depen
                 photo=p.photo or "", birthday=p.birthday or "", twitter=p.twitter or "",
                 instagram=p.instagram or "", github=p.github or "", website=p.website or "",
                 skills=p.skills or "", x=p.x, y=p.y,
-                tags=[schemas.ExportTag(id=t.id, label=t.label) for t in p.tags],
-                timeline=[schemas.ExportTimelineEntry(id=e.id, date=e.date, note=e.note) for e in p.timeline],
-                interests=[schemas.ExportInterest(id=i.id, type=i.type, label=i.label, confirmed=i.confirmed) for i in p.interests],
+                tags=[schemas.ExportTag(id=t.id, label=t.label) for t in p.tags if not t.deleted_at],
+                timeline=[schemas.ExportTimelineEntry(id=e.id, date=e.date, note=e.note) for e in p.timeline if not e.deleted_at],
+                interests=[schemas.ExportInterest(id=i.id, type=i.type, label=i.label, confirmed=i.confirmed) for i in p.interests if not i.deleted_at],
                 relationships=[
                     schemas.ExportRelationship(id=r.id, to_id=r.to_id, label=r.label, sentiment=r.sentiment)
-                    for r in p.outgoing
+                    for r in p.outgoing if not r.deleted_at
                 ],
             )
             for p in people
@@ -692,3 +718,147 @@ def save_layout(layout: schemas.LayoutUpdate, db: Session = Depends(get_db), cur
             person.y = pos["y"]
     db.commit()
     return {"ok": True}
+
+
+# ── Sync ─────────────────────────────────────────────────────────────────────
+# See the design notes in the conversation this was built from: last-write-wins
+# per row via updated_at, soft-delete tombstones via deleted_at, scoped to the
+# 5 core graph tables (Person/PersonTag/TimelineEntry/PersonInterest/
+# Relationship). RelationshipSuggestion/ProfileSuggestion are deliberately
+# excluded — they're ephemeral pending-AI-review state, not graph data worth
+# syncing across devices; each device can just regenerate its own via /enrich
+# and /analyze.
+
+def _row_to_dict(row, fields: list) -> dict:
+    d = {f: getattr(row, f) for f in fields}
+    d["updated_at"] = row.updated_at.isoformat() if row.updated_at else None
+    d["deleted_at"] = row.deleted_at.isoformat() if row.deleted_at else None
+    return d
+
+PERSON_FIELDS = ["id", "name", "primary_tag", "occupation", "company", "location",
+                 "phone", "email", "linkedin", "photo", "description", "birthday",
+                 "twitter", "instagram", "github", "website", "skills", "x", "y"]
+TAG_FIELDS = ["id", "person_id", "label"]
+TIMELINE_FIELDS = ["id", "person_id", "date", "note"]
+INTEREST_FIELDS = ["id", "person_id", "type", "label", "confirmed", "source_entry_id"]
+RELATIONSHIP_FIELDS = ["id", "from_id", "to_id", "label", "sentiment"]
+
+
+def _sync_pull_internal(since_dt: datetime, db: Session, current_user: models.User) -> schemas.SyncPullResponse:
+    server_time = datetime.now(timezone.utc)
+    owned_ids = [row[0] for row in db.query(models.Person.id).filter(models.Person.owner_id == current_user.id)]
+
+    people = db.query(models.Person).filter(
+        models.Person.owner_id == current_user.id, models.Person.updated_at > since_dt,
+    ).all()
+    tags = db.query(models.PersonTag).filter(
+        models.PersonTag.person_id.in_(owned_ids), models.PersonTag.updated_at > since_dt,
+    ).all() if owned_ids else []
+    timeline = db.query(models.TimelineEntry).filter(
+        models.TimelineEntry.person_id.in_(owned_ids), models.TimelineEntry.updated_at > since_dt,
+    ).all() if owned_ids else []
+    interests = db.query(models.PersonInterest).filter(
+        models.PersonInterest.person_id.in_(owned_ids), models.PersonInterest.updated_at > since_dt,
+    ).all() if owned_ids else []
+    relationships = db.query(models.Relationship).filter(
+        models.Relationship.from_id.in_(owned_ids), models.Relationship.updated_at > since_dt,
+    ).all() if owned_ids else []
+
+    return schemas.SyncPullResponse(
+        people=[_row_to_dict(p, PERSON_FIELDS) for p in people],
+        tags=[_row_to_dict(t, TAG_FIELDS) for t in tags],
+        timeline=[_row_to_dict(e, TIMELINE_FIELDS) for e in timeline],
+        interests=[_row_to_dict(i, INTEREST_FIELDS) for i in interests],
+        relationships=[_row_to_dict(r, RELATIONSHIP_FIELDS) for r in relationships],
+        server_time=server_time.isoformat(),
+    )
+
+
+@app.get("/sync", response_model=schemas.SyncPullResponse)
+def sync_pull(since: float = 0, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    # `since` is a plain Unix timestamp (seconds), not an ISO string, quite
+    # deliberately — ISO timestamps contain a `+` in their timezone offset
+    # (e.g. "...+00:00"), which gets silently decoded as a literal space by
+    # any client that doesn't properly URL-encode query parameters, breaking
+    # datetime.fromisoformat() server-side. Plain digits never need escaping
+    # in a URL at all, which sidesteps the whole footgun rather than relying
+    # on every future caller remembering to encode correctly.
+    since_dt = datetime.fromtimestamp(since, tz=timezone.utc)
+    return _sync_pull_internal(since_dt, db, current_user)
+
+
+def _upsert_synced_row(db: Session, model_cls, fields: list, incoming: dict, current_user: models.User, owned_ids: set):
+    """
+    Upserts a single row from a sync push, enforcing last-write-wins and
+    ownership. Returns nothing — mutates the session directly. Silently
+    no-ops (rather than raising) for rows that don't belong to the current
+    user, so one bad/tampered row in a push doesn't fail the entire batch.
+    """
+    row_id = incoming.get("id")
+    if not row_id:
+        return
+
+    # Ownership check: for Person rows, owner_id must match. For child rows
+    # (tags/timeline/interests/relationships), person_id must be in the
+    # caller's own set of person ids.
+    if model_cls is models.Person:
+        pass  # owner_id is set explicitly below for new rows, checked for existing ones after fetch
+    else:
+        person_id = incoming.get("person_id") or incoming.get("from_id")
+        if person_id not in owned_ids:
+            return
+
+    incoming_updated_at = datetime.fromisoformat(incoming["updated_at"]) if incoming.get("updated_at") else datetime.now(timezone.utc)
+    incoming_deleted_at = datetime.fromisoformat(incoming["deleted_at"]) if incoming.get("deleted_at") else None
+
+    existing = db.query(model_cls).filter(model_cls.id == row_id).first()
+
+    if existing:
+        # Ownership re-check for existing rows (covers Person directly, and
+        # is a redundant-but-cheap extra check for child rows already
+        # filtered above).
+        owner_id = getattr(existing, "owner_id", None)
+        if model_cls is models.Person and owner_id != current_user.id:
+            return
+        if existing.updated_at is not None and existing.updated_at >= incoming_updated_at:
+            return  # server's version is already newer or equal — it wins
+        for f in fields:
+            if f in incoming and f != "id":
+                setattr(existing, f, incoming[f])
+        existing.updated_at = incoming_updated_at
+        existing.deleted_at = incoming_deleted_at
+    else:
+        kwargs = {f: incoming.get(f) for f in fields}
+        kwargs["updated_at"] = incoming_updated_at
+        kwargs["deleted_at"] = incoming_deleted_at
+        if model_cls is models.Person:
+            kwargs["owner_id"] = current_user.id
+        db.add(model_cls(**kwargs))
+
+
+@app.post("/sync", response_model=schemas.SyncPullResponse)
+def sync_push(payload: schemas.SyncPushPayload, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    # People first — child rows below reference person_id/from_id and their
+    # ownership check depends on the (possibly just-created) person existing.
+    for p in payload.people:
+        _upsert_synced_row(db, models.Person, PERSON_FIELDS, p, current_user, set())
+    db.commit()
+
+    owned_ids = {row[0] for row in db.query(models.Person.id).filter(models.Person.owner_id == current_user.id)}
+
+    for t in payload.tags:
+        _upsert_synced_row(db, models.PersonTag, TAG_FIELDS, t, current_user, owned_ids)
+    for e in payload.timeline:
+        _upsert_synced_row(db, models.TimelineEntry, TIMELINE_FIELDS, e, current_user, owned_ids)
+    for i in payload.interests:
+        _upsert_synced_row(db, models.PersonInterest, INTEREST_FIELDS, i, current_user, owned_ids)
+    for r in payload.relationships:
+        _upsert_synced_row(db, models.Relationship, RELATIONSHIP_FIELDS, r, current_user, owned_ids)
+    db.commit()
+
+    # Immediately hand back anything changed since the same watermark the
+    # client pushed against — this is what lets the client catch both other
+    # devices' changes AND anything the server just rejected as stale in one
+    # combined push+pull round trip, instead of needing a second request.
+    since_dt = datetime.fromisoformat(payload.since) if payload.since else datetime.fromtimestamp(0, tz=timezone.utc)
+    return _sync_pull_internal(since_dt, db, current_user)

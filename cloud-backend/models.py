@@ -64,6 +64,12 @@ class Person(Base):
     skills = Column(Text, default="")              # Comma-separated skill list
     x = Column(Float, default=0.0)                 # Canvas position
     y = Column(Float, default=0.0)
+    # Sync tracking (see main.py's /sync endpoints). updated_at drives
+    # last-write-wins conflict resolution; deleted_at is a tombstone so a
+    # deletion on one device is itself a visible "change since X" the other
+    # device's sync can see and apply, instead of just silently vanishing.
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False, index=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     owner = relationship("User", back_populates="people")
     tags = relationship("PersonTag", back_populates="person", cascade="all, delete-orphan")
@@ -93,6 +99,8 @@ class PersonTag(Base):
     id = Column(String, primary_key=True, default=gen_id)
     person_id = Column(String, ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
     label = Column(String, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False, index=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     person = relationship("Person", back_populates="tags")
 
@@ -105,6 +113,8 @@ class TimelineEntry(Base):
     person_id = Column(String, ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
     date = Column(String, nullable=False)          # ISO date string YYYY-MM-DD
     note = Column(Text, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False, index=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     person = relationship("Person", back_populates="timeline")
 
@@ -124,6 +134,8 @@ class PersonInterest(Base):
     label = Column(String, nullable=False)         # e.g. "sushi", "loud music"
     confirmed = Column(Boolean, default=False)
     source_entry_id = Column(String, ForeignKey("timeline_entries.id", ondelete="SET NULL"), nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False, index=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     person = relationship("Person", back_populates="interests")
 
@@ -187,6 +199,8 @@ class Relationship(Base):
     to_id = Column(String, ForeignKey("people.id", ondelete="CASCADE"), nullable=False)
     label = Column(String, default="")             # e.g. "Friend", "Colleague"
     sentiment = Column(String, default="neutral")  # hates/dislikes/neutral/likes/loves
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False, index=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     from_person = relationship("Person", foreign_keys=[from_id], back_populates="outgoing")
     to_person = relationship("Person", foreign_keys=[to_id], back_populates="incoming")

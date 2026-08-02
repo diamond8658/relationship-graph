@@ -1,0 +1,48 @@
+# Paste this into a new Dockge stack on your Unraid box. Unlike
+# cloud-backend/docker-compose.yml (used for local dev, which builds the
+# image), this one pulls the image GitHub Actions already built and pushed
+# to GHCR — nothing needs to be cloned or built on Unraid itself.
+#
+# Set the image owner/name below to match your GitHub username/repo.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: relationship_graph_cloud
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: ghcr.io/diamond8658/relationship-graph-backend:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD}@db:5432/relationship_graph_cloud
+      JWT_SECRET: ${JWT_SECRET}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+    ports:
+      - "8000:8000"
+
+  # Polls GHCR every 5 minutes and auto-pulls + restarts `backend` whenever
+  # a new image lands — this is what makes "push to main" actually reach
+  # Unraid without you doing anything by hand.
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 300 backend
+
+volumes:
+  db_data:

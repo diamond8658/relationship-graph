@@ -229,3 +229,26 @@ class ExportData(BaseModel):
     version: int
     exported_at: str
     people: List[ExportPerson]
+
+# ── Sync ─────────────────────────────────────────────────────────────────────
+# Deliberately loose (dict-based rows) rather than full per-table schemas —
+# the sync payload shape mirrors the DB columns directly (including
+# updated_at/deleted_at), and duplicating every field into yet another schema
+# class per table wasn't worth it for an internal sync contract both ends of
+# which are code I control.
+
+class SyncPushPayload(BaseModel):
+    since: Optional[str] = None  # ISO timestamp; None = full push (first sync)
+    people: List[Dict] = []
+    tags: List[Dict] = []
+    timeline: List[Dict] = []
+    interests: List[Dict] = []
+    relationships: List[Dict] = []
+
+class SyncPullResponse(BaseModel):
+    people: List[Dict]
+    tags: List[Dict]
+    timeline: List[Dict]
+    interests: List[Dict]
+    relationships: List[Dict]
+    server_time: str
